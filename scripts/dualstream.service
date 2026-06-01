@@ -1,0 +1,24 @@
+[Unit]
+Description=DualStream dual Pi Camera 3 WebRTC streamer
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=dualstream
+Group=dualstream
+SupplementaryGroups=video
+WorkingDirectory=/opt/dualstream
+Environment=PYTHONUNBUFFERED=1
+Environment=DUALSTREAM_CONFIG=/etc/dualstream/dualstream.toml
+ExecStart=/opt/dualstream/.venv/bin/python -m dualstream
+Restart=on-failure
+RestartSec=5
+# Phase 2 will add CAP_SYS_ADMIN / sudoers for halt + wakealarm + LED.
+ProtectSystem=full
+ProtectHome=true
+NoNewPrivileges=true
+ReadWritePaths=/var/lib/dualstream
+
+[Install]
+WantedBy=multi-user.target

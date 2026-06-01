@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dualstream"
+version = "0.1.0"
+description = "Dual Pi Camera 3 WebRTC streamer for Raspberry Pi 5"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Hedgerow" }]
+dependencies = [
+    "aiortc>=1.9.0",
+    "aiohttp>=3.9.0",
+    "pydantic>=2.5.0",
+    "numpy>=1.26.0",
+    "Pillow>=10.0.0",
+    "tomli>=2.0.1; python_version < '3.11'",
+]
+
+# Note: picamera2 is not a pip dependency. On Raspberry Pi OS install it via
+#   sudo apt install -y python3-picamera2
+# and create the project's venv with `--system-site-packages` so it is visible.
+
+[project.scripts]
+dualstream = "dualstream.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+dualstream = ["webui/*"]

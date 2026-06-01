@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>DualStream</title>
+    <link rel="stylesheet" href="/static/style.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">DualStream</div>
+      <div class="status-group">
+        <span id="mode-badge" class="mode-badge mode-unknown" title="Power mode">--</span>
+        <span id="viewer-count" class="counter" title="Active viewers">0 viewers</span>
+      </div>
+      <div class="controls">
+        <input
+          id="token-input"
+          type="password"
+          placeholder="Bearer token"
+          autocomplete="off"
+          spellcheck="false"
+        />
+        <button id="start-btn" type="button">Start</button>
+        <button id="stop-btn" type="button" disabled>Stop</button>
+        <button id="snapshot-btn" type="button">Snapshot</button>
+      </div>
+    </header>
+
+    <main>
+      <section class="grid">
+        <figure class="tile">
+          <video id="video-0" autoplay playsinline muted></video>
+          <figcaption>
+            <span>Camera 0</span>
+            <span id="cam0-meta" class="meta">--</span>
+          </figcaption>
+        </figure>
+        <figure class="tile">
+          <video id="video-1" autoplay playsinline muted></video>
+          <figcaption>
+            <span>Camera 1</span>
+            <span id="cam1-meta" class="meta">--</span>
+          </figcaption>
+        </figure>
+      </section>
+
+      <section class="snapshots">
+        <h2>Recent snapshots</h2>
+        <div id="snapshot-strip" class="snapshot-strip">
+          <span class="empty">No snapshots yet.</span>
+        </div>
+      </section>
+
+      <section id="log" class="log" aria-live="polite"></section>
+    </main>
+
+    <script src="/static/app.js"></script>
+  </body>
+</html>

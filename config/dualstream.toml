@@ -1,0 +1,38 @@
+# DualStream configuration (Phase 1)
+#
+# Phase 2 will add [battery], [schedule], and an expanded [power] section.
+# Those blocks are intentionally absent for now so the surface stays minimal.
+
+[server]
+host = "0.0.0.0"
+port = 8080
+# Bearer token required on the Authorization header for all non-static routes.
+# Change this for any non-bench deployment. Tailscale ACLs remain the primary
+# access control; the token is defense-in-depth.
+auth_token = "change-me"
+
+[camera0]
+resolution = [1280, 720]
+framerate = 15
+bitrate_kbps = 1000
+# IMX708 sensor controls passed through to picamera2. Keep empty unless tuning.
+controls = {}
+
+[camera1]
+resolution = [1280, 720]
+framerate = 15
+bitrate_kbps = 1000
+controls = {}
+
+[snapshots]
+enabled = true
+interval_seconds = 300
+retention_days = 7
+path = "/var/lib/dualstream/snapshots"
+# JPEG quality 1-95. Higher = bigger file. 75 is a reasonable balance.
+jpeg_quality = 75
+
+[power]
+# Phase 1 honours only these two minimal settings. Phase 2 expands this block.
+disable_act_led = true
+idle_grace_seconds = 10
