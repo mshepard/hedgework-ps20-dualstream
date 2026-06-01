@@ -155,12 +155,20 @@ async function startStreaming() {
   // ([camera 0, camera 1]). This is more reliable than incrementing an
   // index on track-event arrival, which the WebRTC spec doesn't strictly
   // order across implementations.
+  //
+  // We deliberately wrap each track in a *fresh* MediaStream rather than
+  // reusing event.streams[0]. aiortc emits a single msid for the whole PC,
+  // so both incoming tracks belong to the same MediaStream object; if we
+  // assigned that shared stream to both <video> elements, each <video>
+  // would only play its first video track and both tiles would show the
+  // same camera. A unique MediaStream per <video> guarantees independent
+  // playback.
   pc.addEventListener("track", (event) => {
     const transceivers = pc.getTransceivers();
     const idx = transceivers.indexOf(event.transceiver);
     const slot = idx >= 0 ? state.videoSlots[idx] : null;
     if (slot) {
-      slot.srcObject = event.streams[0] || new MediaStream([event.track]);
+      slot.srcObject = new MediaStream([event.track]);
       log(`Track bound to slot ${idx} (mid=${event.transceiver.mid || "?"})`);
     } else {
       log(`Track had no slot (idx=${idx})`, "warn");
