@@ -29,7 +29,12 @@ Endpoints:
     GET  /api/snapshots            -> recent snapshot index JSON
 
   Public (viewer_token OR admin auth_token; Bearer or ?key= accepted):
-    POST /api/public/offer         -> WebRTC SDP exchange (single camera)
+    POST /api/public/offer                -> WebRTC SDP exchange (single camera)
+    GET  /api/public/snapshots/latest     -> most recent snapshot URL + ts
+                                              for a given camera (so the
+                                              public per-camera pages can
+                                              show a still poster when the
+                                              live stream isn't running)
 
 Phase 2 will fold the real power-mode state machine into /api/status, add
 /api/admin/force_mode for testing, and gate the offer endpoints on mode.
@@ -157,6 +162,9 @@ class DualStreamServer:
 
         # Public per-camera API.
         app.router.add_post("/api/public/offer", self._public_offer)
+        app.router.add_get(
+            "/api/public/snapshots/latest", self._public_latest_snapshot
+        )
 
         # Static assets.
         app.router.add_static("/snapshots", self.snapshots.base_path, show_index=False)
@@ -258,6 +266,37 @@ class DualStreamServer:
                 {"error": f"unknown camera: {camera}"}, status=400
             )
         return await self._negotiate_video_offer([camera], sdp, type_)
+
+    async def _public_latest_snapshot(self, request: web.Request) -> web.Response:
+        raw = request.query.get("camera")
+        if raw is None:
+            return web.json_response(
+                {"error": "camera query parameter required"}, status=400
+            )
+        try:
+            camera = int(raw)
+        except ValueError:
+            return web.json_response(
+                {"error": "camera must be an int"}, status=400
+            )
+        if camera not in self.cameras.numbers():
+            return web.json_response(
+                {"error": f"unknown camera: {camera}"}, status=400
+            )
+        items = self.snapshots.list_snapshots(camera_num=camera, limit=1)
+        if not items:
+            return web.json_response(
+                {"camera": camera, "url": None, "timestamp": None}
+            )
+        item = items[0]
+        return web.json_response(
+            {
+                "camera": camera,
+                "url": item["url"],
+                "timestamp": item["timestamp"],
+                "filename": item["filename"],
+            }
+        )
 
     # ---------- Shared offer/negotiation pipeline ----------
 

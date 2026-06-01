@@ -113,6 +113,8 @@ http://<pi-tailnet-name>:8080/cam1?key=<viewer_token>
 ```
 Each is a single-camera page with Start, Stop, and Fullscreen — no log, no token field. The URL is the access credential, so treat it like a password. Tailscale ACLs are still the outer access gate.
 
+While the live stream is not running, the page displays the most recent snapshot as a still preview (auto-refreshed every 30 s) so visitors immediately see what's on camera without needing to start a WebRTC session. The header shows "last snapshot HH:MM:SS" to confirm freshness.
+
 ## Phase 1 validation checklist
 
 These mirror the validation steps in the plan, scoped to Phase 1:

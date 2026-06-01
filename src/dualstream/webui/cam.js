@@ -13,6 +13,7 @@ const els = {
   stop: document.getElementById("stop-btn"),
   fullscreen: document.getElementById("fullscreen-btn"),
   label: document.getElementById("cam-label"),
+  snapshotMeta: document.getElementById("snapshot-meta"),
   video: document.getElementById("video"),
   stage: document.getElementById("cam-stage"),
   overlay: document.getElementById("overlay"),
@@ -23,7 +24,17 @@ const state = {
   cameraNum: null,
   key: null,
   pc: null,
+  // Holds {url, timestamp, filename} of the most recent snapshot we've
+  // fetched. Used to drive the <video> poster so the page shows a still
+  // image when the live stream isn't running.
+  lastSnapshot: null,
+  snapshotTimer: null,
 };
+
+// Poll interval for the latest-snapshot endpoint. 30 s comfortably exceeds
+// the typical snapshot cadence (default 300 s) so we'll always be fresh
+// without hammering the server.
+const SNAPSHOT_POLL_MS = 30_000;
 
 function parseCameraNum() {
   const m = location.pathname.match(/\/cam(\d+)/);
@@ -133,8 +144,56 @@ function teardown() {
     state.pc = null;
   }
   els.video.srcObject = null;
+  // Re-evaluate the poster so the still image reappears after a session.
+  // Some browsers don't auto-show the poster after a video element has
+  // played media and had its srcObject cleared; load() forces it.
+  try { els.video.load(); } catch (_) { /* noop */ }
   els.start.disabled = false;
   els.stop.disabled = true;
+}
+
+async function refreshLatestSnapshot() {
+  if (!state.key || state.cameraNum == null) return;
+  try {
+    const url =
+      `/api/public/snapshots/latest` +
+      `?camera=${state.cameraNum}&key=${encodeURIComponent(state.key)}`;
+    const resp = await fetch(url, { cache: "no-store" });
+    if (!resp.ok) return;
+    const data = await resp.json();
+    state.lastSnapshot = data;
+    applySnapshotPoster();
+    if (data.url && data.timestamp) {
+      const date = new Date(data.timestamp * 1000);
+      els.snapshotMeta.textContent = `· last snapshot ${formatTime(date)}`;
+      els.snapshotMeta.title = date.toLocaleString();
+    } else {
+      els.snapshotMeta.textContent = "· no snapshots yet";
+      els.snapshotMeta.title = "";
+    }
+  } catch (_) {
+    // Best-effort. Failing snapshot poll shouldn't disturb the page.
+  }
+}
+
+function applySnapshotPoster() {
+  if (state.lastSnapshot && state.lastSnapshot.url) {
+    // Snapshot URLs include a timestamped path, so the URL itself changes
+    // when a new snapshot arrives; no cache-busting needed.
+    if (els.video.poster !== state.lastSnapshot.url) {
+      els.video.poster = state.lastSnapshot.url;
+    }
+  } else {
+    els.video.removeAttribute("poster");
+  }
+}
+
+function formatTime(date) {
+  return date.toLocaleTimeString([], {
+    hour: "numeric",
+    minute: "2-digit",
+    second: "2-digit",
+  });
 }
 
 function stop() {
@@ -177,7 +236,21 @@ function init() {
   els.start.addEventListener("click", startStreaming);
   els.stop.addEventListener("click", stop);
   els.fullscreen.addEventListener("click", toggleFullscreen);
+
+  // Latest-snapshot polling: kicks in immediately so the visitor sees a
+  // current still image before they (optionally) click Start. Continues
+  // while streaming so the poster is up-to-date the next time they Stop.
+  refreshLatestSnapshot();
+  state.snapshotTimer = setInterval(refreshLatestSnapshot, SNAPSHOT_POLL_MS);
+}
+
+function cleanup() {
+  if (state.snapshotTimer != null) {
+    clearInterval(state.snapshotTimer);
+    state.snapshotTimer = null;
+  }
+  teardown();
 }
 
 window.addEventListener("DOMContentLoaded", init);
-window.addEventListener("beforeunload", teardown);
+window.addEventListener("beforeunload", cleanup);
