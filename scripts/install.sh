@@ -120,13 +120,26 @@ install_config() {
 }
 
 setup_venv() {
-    log "Creating venv at ${INSTALL_PREFIX}/.venv (with --system-site-packages)"
+    # We deliberately do venv creation and pip install AS ROOT, not as the
+    # dualstream system user. Rationale: the cloned repo usually sits under
+    # /home/<some-user>/... which is mode 700/750 on Pi OS, so the dualstream
+    # system user cannot read it. Running pip as the unprivileged user then
+    # fails with a confusing "Invalid requirement / File does not exist"
+    # because pip can't see the source tree. We chown the install prefix back
+    # to dualstream at the end; file ownership only matters for writes, and
+    # the venv binaries are world-readable/executable.
     if [[ ! -d "${INSTALL_PREFIX}/.venv" ]]; then
-        sudo -u "${USER_NAME}" python3 -m venv --system-site-packages "${INSTALL_PREFIX}/.venv"
+        log "Creating venv at ${INSTALL_PREFIX}/.venv (with --system-site-packages)"
+        python3 -m venv --system-site-packages "${INSTALL_PREFIX}/.venv"
+    else
+        log "Reusing existing venv at ${INSTALL_PREFIX}/.venv"
     fi
-    log "Installing DualStream into the venv"
-    sudo -u "${USER_NAME}" "${INSTALL_PREFIX}/.venv/bin/pip" install --upgrade pip
-    sudo -u "${USER_NAME}" "${INSTALL_PREFIX}/.venv/bin/pip" install "${REPO_ROOT}"
+    log "Upgrading pip"
+    "${INSTALL_PREFIX}/.venv/bin/pip" install --upgrade pip
+    log "Installing DualStream from ${REPO_ROOT}"
+    "${INSTALL_PREFIX}/.venv/bin/pip" install "${REPO_ROOT}"
+    log "Setting ownership of ${INSTALL_PREFIX} to ${USER_NAME}"
+    chown -R "${USER_NAME}:${USER_NAME}" "${INSTALL_PREFIX}"
 }
 
 install_systemd_unit() {
