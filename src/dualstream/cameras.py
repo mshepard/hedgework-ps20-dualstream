@@ -143,7 +143,11 @@ class Camera:
             picam2 = self._picam2
             if picam2 is None:
                 raise RuntimeError(f"Camera {self.camera_num} is not running")
-            return picam2.capture_array("main")
+            # Defensive copy: picamera2.capture_array() may, on some
+            # libcamera versions / multi-camera setups, hand back a view
+            # into a shared buffer pool. Copying decouples the two
+            # cameras' frame streams.
+            return picam2.capture_array("main").copy()
 
     @asynccontextmanager
     async def session(self):
