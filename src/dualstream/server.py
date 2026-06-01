@@ -180,12 +180,31 @@ class DualStreamServer:
             if pc.connectionState in ("failed", "closed"):
                 await self._close_pc(pc)
 
-        for cam in cameras:
-            track = CameraTrack(cam, label=f"camera{cam.camera_num}")
-            pc.addTrack(track)
-
         try:
+            # setRemoteDescription first so the offer's m-lines create
+            # transceivers in the order the browser intended; then bind one
+            # CameraTrack to each video transceiver in that same order via
+            # replaceTrack. This is much more reliable than calling addTrack
+            # before setRemoteDescription, which leaves it to aiortc's merge
+            # logic to decide which track maps to which m-line.
             await pc.setRemoteDescription(RTCSessionDescription(sdp=sdp, type=type_))
+
+            video_txs = [t for t in pc.getTransceivers() if t.kind == "video"]
+            if len(video_txs) != len(cameras):
+                log.warning(
+                    "transceiver/camera count mismatch: %d video m-lines, %d cameras requested",
+                    len(video_txs),
+                    len(cameras),
+                )
+
+            track_map: list[dict] = []
+            for tx, cam in zip(video_txs, cameras):
+                track = CameraTrack(cam, label=f"camera{cam.camera_num}")
+                tx.sender.replaceTrack(track)
+                # We only send media; the browser side is recvonly.
+                tx.direction = "sendonly"
+                track_map.append({"mid": tx.mid, "camera_num": cam.camera_num})
+
             answer = await pc.createAnswer()
             await pc.setLocalDescription(answer)
         except Exception:
@@ -193,12 +212,15 @@ class DualStreamServer:
             await self._close_pc(pc)
             return web.json_response({"error": "negotiation failed"}, status=500)
 
+        log.info("Answer ready: tracks=%s", track_map)
         return web.json_response(
             {
                 "sdp": pc.localDescription.sdp,
                 "type": pc.localDescription.type,
                 "pc_id": pc_id,
                 "cameras": requested_nums,
+                # tracks[i] tells the browser which camera_num is on mid=tracks[i].mid
+                "tracks": track_map,
             }
         )
 

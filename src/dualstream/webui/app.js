@@ -150,16 +150,21 @@ async function startStreaming() {
   els.video0.srcObject = null;
   els.video1.srcObject = null;
 
-  // We add two recvonly transceivers in the order [camera 0, camera 1].
-  // The server adds tracks in the order it receives them in body.cameras.
-  // Track events fire in transceiver order, so we route by index.
-  let trackIndex = 0;
+  // Route each incoming track to a <video> by its transceiver's position in
+  // pc.getTransceivers(), which matches the order we added them in below
+  // ([camera 0, camera 1]). This is more reliable than incrementing an
+  // index on track-event arrival, which the WebRTC spec doesn't strictly
+  // order across implementations.
   pc.addEventListener("track", (event) => {
-    const slot = state.videoSlots[trackIndex];
+    const transceivers = pc.getTransceivers();
+    const idx = transceivers.indexOf(event.transceiver);
+    const slot = idx >= 0 ? state.videoSlots[idx] : null;
     if (slot) {
       slot.srcObject = event.streams[0] || new MediaStream([event.track]);
+      log(`Track bound to slot ${idx} (mid=${event.transceiver.mid || "?"})`);
+    } else {
+      log(`Track had no slot (idx=${idx})`, "warn");
     }
-    trackIndex += 1;
   });
 
   pc.addEventListener("iceconnectionstatechange", () => {
@@ -193,7 +198,14 @@ async function startStreaming() {
       }),
     });
     await pc.setRemoteDescription({ type: answer.type, sdp: answer.sdp });
-    log(`Session established (pc_id=${answer.pc_id})`, "ok");
+    if (Array.isArray(answer.tracks)) {
+      const mapping = answer.tracks
+        .map((t) => `mid=${t.mid} -> cam${t.camera_num}`)
+        .join(", ");
+      log(`Session established (pc_id=${answer.pc_id}) [${mapping}]`, "ok");
+    } else {
+      log(`Session established (pc_id=${answer.pc_id})`, "ok");
+    }
     els.stop.disabled = false;
   } catch (err) {
     log(`Failed to start: ${err.message}`, "err");
