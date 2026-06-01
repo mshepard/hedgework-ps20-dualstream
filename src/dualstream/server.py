@@ -1,18 +1,38 @@
 """aiohttp server: static UI, WebRTC signaling, snapshots API.
 
-Endpoints:
-    GET  /                 -> static UI index (no auth)
-    GET  /static/<file>    -> UI assets (no auth)
-    GET  /health           -> liveness probe (no auth)
-    GET  /snapshots/<path> -> static snapshot JPEG files (no auth, so <img>
-                              tags can embed them; Tailscale ACL is the gate)
-    GET  /api/status       -> JSON status (requires bearer token)
-    POST /api/offer        -> WebRTC SDP exchange (requires bearer token)
-    POST /api/snapshot     -> trigger a manual snapshot (requires bearer)
-    GET  /api/snapshots    -> recent snapshot index JSON (requires bearer)
+Two distinct surfaces:
 
-Phase 2 will fold the real power-mode state machine into /api/status,
-add /api/admin/force_mode for testing, and gate /api/offer on mode.
+  * **Admin (dual-tile diagnostic UI)** — requires the admin bearer token on
+    every API call. This is the page at "/" with the activity log, manual
+    snapshot button, and side-by-side camera tiles.
+
+  * **Public per-camera pages** — single shareable URL per camera at
+    /cam0 and /cam1. Authenticated by an opaque "viewer_token" passed as a
+    "?key=<token>" query parameter (or, equivalently, a Bearer header). The
+    page has just the video plus Start/Stop/Fullscreen controls.
+
+Endpoints:
+
+  Static / unauthenticated:
+    GET  /                         -> admin dual-tile UI (HTML only; the API
+                                       calls it makes still require admin
+                                       bearer token)
+    GET  /cam0, /cam1              -> public per-camera viewer HTML
+    GET  /static/<file>            -> UI assets
+    GET  /snapshots/<path>         -> static snapshot JPEG files
+    GET  /health                   -> liveness probe
+
+  Admin (admin auth_token required, Bearer header):
+    GET  /api/status               -> JSON status + viewer share URLs
+    POST /api/offer                -> WebRTC SDP exchange (multi-camera)
+    POST /api/snapshot             -> trigger a manual snapshot
+    GET  /api/snapshots            -> recent snapshot index JSON
+
+  Public (viewer_token OR admin auth_token; Bearer or ?key= accepted):
+    POST /api/public/offer         -> WebRTC SDP exchange (single camera)
+
+Phase 2 will fold the real power-mode state machine into /api/status, add
+/api/admin/force_mode for testing, and gate the offer endpoints on mode.
 """
 
 from __future__ import annotations
@@ -36,24 +56,61 @@ logger = logging.getLogger("dualstream.server")
 
 WEBUI_DIR = Path(__file__).resolve().parent / "webui"
 
-# Paths that bypass the bearer-token check. Static UI must be reachable
-# anonymously so the browser can load the page that prompts for the token,
-# and embedded snapshot <img> tags can't carry Authorization headers.
+# Paths that bypass auth entirely. Static UI must be reachable anonymously
+# so the browser can load the page (which then sends the appropriate token
+# on subsequent API calls). Embedded snapshot <img> tags can't carry
+# Authorization headers either.
 UNAUTH_PREFIXES = ("/static/", "/snapshots/")
-UNAUTH_EXACT = {"/", "/health"}
+UNAUTH_EXACT = {"/", "/health", "/cam0", "/cam1"}
+
+# Prefix for endpoints that accept the viewer token (or admin token) via
+# Bearer header OR ?key= query parameter. Everything else requires admin
+# auth via Bearer header only.
+PUBLIC_API_PREFIX = "/api/public/"
 
 
-def _make_auth_middleware(token: str):
+def _extract_token(request: web.Request) -> str | None:
+    auth = request.headers.get("Authorization", "")
+    if auth.startswith("Bearer "):
+        token = auth[len("Bearer "):].strip()
+        if token:
+            return token
+    key = request.query.get("key", "").strip()
+    return key or None
+
+
+def _make_auth_middleware(admin_token: str, viewer_token: str):
     @web.middleware
     async def auth_middleware(request: web.Request, handler):
         path = request.path
         if path in UNAUTH_EXACT or any(path.startswith(p) for p in UNAUTH_PREFIXES):
             return await handler(request)
+
+        if path.startswith(PUBLIC_API_PREFIX):
+            if not viewer_token:
+                return web.json_response(
+                    {"error": "public endpoints disabled (viewer_token not set)"},
+                    status=503,
+                )
+            provided = _extract_token(request)
+            if provided is None:
+                return web.json_response(
+                    {"error": "missing access key"}, status=401
+                )
+            if provided != viewer_token and provided != admin_token:
+                return web.json_response(
+                    {"error": "invalid access key"}, status=401
+                )
+            return await handler(request)
+
+        # Default: admin-only, bearer header only. The admin token isn't
+        # acceptable via ?key= to keep it out of URLs / browser history /
+        # access logs.
         auth = request.headers.get("Authorization", "")
         if not auth.startswith("Bearer "):
             return web.json_response({"error": "missing bearer token"}, status=401)
         provided = auth[len("Bearer "):].strip()
-        if provided != token:
+        if provided != admin_token:
             return web.json_response({"error": "invalid token"}, status=401)
         return await handler(request)
 
@@ -79,32 +136,71 @@ class DualStreamServer:
         self.snapshots.base_path.mkdir(parents=True, exist_ok=True)
 
         app = web.Application(
-            middlewares=[_make_auth_middleware(self.config.server.auth_token)]
+            middlewares=[
+                _make_auth_middleware(
+                    self.config.server.auth_token,
+                    self.config.server.viewer_token,
+                )
+            ]
         )
+        # Public / unauthenticated HTML pages.
         app.router.add_get("/", self._index)
+        app.router.add_get("/cam0", self._camera_page)
+        app.router.add_get("/cam1", self._camera_page)
         app.router.add_get("/health", self._health)
+
+        # Admin API.
         app.router.add_get("/api/status", self._status)
         app.router.add_post("/api/offer", self._offer)
         app.router.add_post("/api/snapshot", self._snapshot_now)
         app.router.add_get("/api/snapshots", self._snapshots_list)
+
+        # Public per-camera API.
+        app.router.add_post("/api/public/offer", self._public_offer)
+
+        # Static assets.
         app.router.add_static("/snapshots", self.snapshots.base_path, show_index=False)
         app.router.add_static("/static", WEBUI_DIR)
+
         app.on_shutdown.append(self._on_shutdown)
         return app
+
+    # ---------- HTML routes ----------
 
     async def _index(self, request: web.Request) -> web.Response:
         return web.FileResponse(WEBUI_DIR / "index.html")
 
+    async def _camera_page(self, request: web.Request) -> web.Response:
+        return web.FileResponse(WEBUI_DIR / "cam.html")
+
     async def _health(self, request: web.Request) -> web.Response:
         return web.json_response({"status": "ok", "version": __version__})
 
+    # ---------- Admin API ----------
+
     async def _status(self, request: web.Request) -> web.Response:
+        viewer_token_set = bool(self.config.server.viewer_token)
         return web.json_response(
             {
                 "version": __version__,
                 # Phase 2 will replace this stub with the real state machine.
                 "mode": "FULL",
                 "viewers": len(self._pcs),
+                "viewer_token_set": viewer_token_set,
+                # Relative share URLs (so the browser uses whatever host /
+                # scheme the admin loaded the page from). Empty list when
+                # public access is disabled.
+                "viewer_share_urls": (
+                    [
+                        {
+                            "camera_num": cam.camera_num,
+                            "path": f"/cam{cam.camera_num}?key={self.config.server.viewer_token}",
+                        }
+                        for cam in self.cameras.all()
+                    ]
+                    if viewer_token_set
+                    else []
+                ),
                 "cameras": [
                     {
                         "camera_num": cam.camera_num,
@@ -140,6 +236,37 @@ class DualStreamServer:
         if unknown:
             return web.json_response({"error": f"unknown camera(s): {unknown}"}, status=400)
 
+        return await self._negotiate_video_offer(requested_nums, sdp, type_)
+
+    # ---------- Public API ----------
+
+    async def _public_offer(self, request: web.Request) -> web.Response:
+        try:
+            body = await request.json()
+        except Exception:
+            return web.json_response({"error": "invalid JSON"}, status=400)
+        try:
+            sdp = body["sdp"]
+            type_ = body["type"]
+            camera = int(body["camera"])
+        except (KeyError, TypeError, ValueError) as ex:
+            return web.json_response(
+                {"error": f"missing or invalid field: {ex}"}, status=400
+            )
+        if camera not in self.cameras.numbers():
+            return web.json_response(
+                {"error": f"unknown camera: {camera}"}, status=400
+            )
+        return await self._negotiate_video_offer([camera], sdp, type_)
+
+    # ---------- Shared offer/negotiation pipeline ----------
+
+    async def _negotiate_video_offer(
+        self,
+        requested_nums: list[int],
+        sdp: str,
+        type_: str,
+    ) -> web.Response:
         cameras = [self.cameras.get(n) for n in requested_nums]
 
         # Acquire all requested cameras up-front so the tracks have running

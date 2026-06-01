@@ -254,3 +254,129 @@ main {
 .log .entry.err { color: var(--danger); }
 .log .entry.warn { color: var(--warn); }
 .log .entry.ok { color: var(--ok); }
+
+/* ---------- Per-camera public viewer ---------- */
+
+.cam-page {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.cam-topbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+
+.cam-topbar .brand {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.cam-topbar .brand-name {
+  font-weight: 600;
+  font-size: 16px;
+}
+
+.cam-topbar .brand-sep {
+  color: var(--muted);
+}
+
+.cam-topbar .controls {
+  margin-left: auto;
+}
+
+#fullscreen-btn {
+  background: #4a4a55;
+  padding: 7px 10px;
+}
+
+#fullscreen-btn:hover:not(:disabled) {
+  background: #5e5e6e;
+}
+
+.cam-main {
+  flex: 1;
+  display: flex;
+  padding: 16px;
+  min-height: 0;
+}
+
+.cam-stage {
+  flex: 1;
+  position: relative;
+  background: black;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  display: flex;
+  align-items: stretch;
+  justify-content: stretch;
+}
+
+.cam-stage video {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: black;
+  display: block;
+}
+
+.cam-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.55);
+  pointer-events: none;
+  transition: opacity 0.15s;
+}
+
+.cam-overlay.hidden {
+  opacity: 0;
+}
+
+.cam-overlay-inner {
+  padding: 12px 18px;
+  border-radius: 8px;
+  font-size: 14px;
+  color: var(--text);
+  background: rgba(20, 24, 32, 0.85);
+  border: 1px solid var(--border);
+}
+
+.cam-overlay.warn .cam-overlay-inner { color: var(--warn); border-color: rgba(210, 153, 34, 0.5); }
+.cam-overlay.error .cam-overlay-inner { color: var(--danger); border-color: rgba(248, 81, 73, 0.5); }
+
+/* Fullscreen: hide the (currently disabled-look) border radius. */
+.cam-stage:fullscreen,
+.cam-stage:-webkit-full-screen {
+  border-radius: 0;
+  border: none;
+}
+
+/* ---------- Per-tile share links on the admin page ---------- */
+
+.tile-share {
+  font-size: 11px;
+  color: var(--muted);
+  text-decoration: none;
+  margin-left: 6px;
+}
+
+.tile-share:hover {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+.tile-share.disabled {
+  color: #4a4a55;
+  pointer-events: none;
+}

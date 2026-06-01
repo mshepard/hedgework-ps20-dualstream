@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>DualStream · Camera</title>
+    <link rel="stylesheet" href="/static/style.css" />
+  </head>
+  <body class="cam-page">
+    <header class="cam-topbar">
+      <div class="brand">
+        <span class="brand-name">DualStream</span>
+        <span class="brand-sep">·</span>
+        <span id="cam-label">Camera ?</span>
+      </div>
+      <div class="controls">
+        <button id="start-btn" type="button">Start</button>
+        <button id="stop-btn" type="button" disabled>Stop</button>
+        <button id="fullscreen-btn" type="button" title="Toggle fullscreen" aria-label="Toggle fullscreen">⛶</button>
+      </div>
+    </header>
+
+    <main class="cam-main">
+      <div class="cam-stage" id="cam-stage">
+        <video id="video" autoplay playsinline muted></video>
+        <div id="overlay" class="cam-overlay">
+          <div class="cam-overlay-inner" id="overlay-message">Loading…</div>
+        </div>
+      </div>
+    </main>
+
+    <script src="/static/cam.js"></script>
+  </body>
+</html>

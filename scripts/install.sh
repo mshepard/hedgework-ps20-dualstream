@@ -13,11 +13,13 @@
 #     so it inherits the apt-installed python3-picamera2
 #   * pip-installs this project into the venv
 #   * Installs and enables the dualstream systemd unit
+#   * On first install (or wherever the placeholder values are still in the
+#     config), auto-generates random admin/viewer tokens and tightens the
+#     config file mode to 0640 root:dualstream
 #
 # What this does NOT do (deliberately — these are hardware-sensitive):
 #   * Modify /boot/firmware/config.txt (CSI dtoverlays). See README.
 #   * Run `tailscale up`. You'll do that with your own auth flow.
-#   * Set the bearer token. Edit /etc/dualstream/dualstream.toml.
 #
 # Re-running this script is safe; it's idempotent.
 
@@ -107,16 +109,122 @@ create_directories() {
     install -d -o "${USER_NAME}" -g "${USER_NAME}" -m 0755 "${DATA_DIR}" "${SNAPSHOT_DIR}"
 }
 
+generate_token() {
+    # 32 url-safe characters → 256 bits of entropy. The output uses only
+    # [A-Za-z0-9_-], so it's safe inside TOML double-quoted strings.
+    python3 -c 'import secrets; print(secrets.token_urlsafe(32))'
+}
+
+# Replace one TOML string-valued key on a line of the form
+#     <key> = "<placeholder>"
+# with a freshly generated random token, only if the line still contains
+# the literal placeholder. Idempotent across re-runs (a customised value
+# is left alone). Uses Python for the rewrite rather than sed so it works
+# on both GNU and BSD platforms and so the token never appears in argv.
+#
+# Arguments: $1 = config path, $2 = key name, $3 = placeholder value.
+# Prints the substituted token on stdout (empty string if no change made).
+rotate_placeholder_token() {
+    local cfg="$1"
+    local key="$2"
+    local placeholder="$3"
+    CFG="${cfg}" KEY="${key}" PLACEHOLDER="${placeholder}" python3 - <<'PY'
+import os
+import re
+import secrets
+import sys
+
+cfg = os.environ["CFG"]
+key = os.environ["KEY"]
+placeholder = os.environ["PLACEHOLDER"]
+
+with open(cfg, "r", encoding="utf-8") as fh:
+    text = fh.read()
+
+pattern = re.compile(
+    r'^(?P<lead>[ \t]*' + re.escape(key) + r'[ \t]*=[ \t]*)"'
+    + re.escape(placeholder) + r'"[ \t]*$',
+    re.MULTILINE,
+)
+if not pattern.search(text):
+    # Not present (already rotated, or line missing entirely). Emit empty
+    # token so the caller knows nothing changed.
+    print("")
+    sys.exit(0)
+
+token = secrets.token_urlsafe(32)
+new_text, count = pattern.subn(lambda m: m.group("lead") + f'"{token}"', text)
+if count == 0:
+    print("")
+    sys.exit(0)
+
+# Atomic-ish rewrite: temp + rename, preserving the existing mode/owner.
+tmp = cfg + ".tmp"
+with open(tmp, "w", encoding="utf-8") as fh:
+    fh.write(new_text)
+os.replace(tmp, cfg)
+print(token)
+PY
+}
+
 install_config() {
-    if [[ -f "${CONFIG_DIR}/dualstream.toml" ]]; then
-        log "Existing ${CONFIG_DIR}/dualstream.toml preserved"
-        return
+    local cfg="${CONFIG_DIR}/dualstream.toml"
+    if [[ ! -f "${cfg}" ]]; then
+        log "Installing default config to ${cfg}"
+        install -o root -g root -m 0640 \
+            "${REPO_ROOT}/config/dualstream.toml" \
+            "${cfg}"
+    else
+        log "Existing ${cfg} preserved; rotating placeholder tokens and adding any missing keys"
     fi
-    log "Installing default config to ${CONFIG_DIR}/dualstream.toml"
-    install -o root -g root -m 0644 \
-        "${REPO_ROOT}/config/dualstream.toml" \
-        "${CONFIG_DIR}/dualstream.toml"
-    log "Edit ${CONFIG_DIR}/dualstream.toml to set a real auth_token before exposing the service"
+
+    # Tighten ownership/mode so the token isn't world-readable. The
+    # dualstream service user is in the dualstream group, so group-read is
+    # sufficient.
+    chown root:"${USER_NAME}" "${cfg}"
+    chmod 0640 "${cfg}"
+
+    # Older configs (from before viewer_token existed) won't have the line
+    # at all — add it. Inserted just after the [server] header so it lives
+    # in the right TOML section. Done in Python for portability.
+    if ! grep -Eq '^[[:space:]]*viewer_token[[:space:]]*=' "${cfg}"; then
+        CFG="${cfg}" python3 - <<'PY'
+import os, re
+cfg = os.environ["CFG"]
+with open(cfg, "r", encoding="utf-8") as fh:
+    text = fh.read()
+insertion = 'viewer_token = "change-me-viewer"\n'
+m = re.search(r'^[ \t]*\[server\][ \t]*\r?\n', text, re.MULTILINE)
+if m:
+    text = text[: m.end()] + insertion + text[m.end():]
+else:
+    if not text.endswith("\n"):
+        text += "\n"
+    text += "\n[server]\n" + insertion
+tmp = cfg + ".tmp"
+with open(tmp, "w", encoding="utf-8") as fh:
+    fh.write(text)
+os.replace(tmp, cfg)
+PY
+        log "Added missing viewer_token line to ${cfg}"
+    fi
+
+    local admin_token viewer_token
+    admin_token="$(rotate_placeholder_token "${cfg}" "auth_token" "change-me")"
+    viewer_token="$(rotate_placeholder_token "${cfg}" "viewer_token" "change-me-viewer")"
+
+    if [[ -n "${admin_token}" ]]; then
+        log "Generated random admin auth_token in ${cfg}"
+        ADMIN_TOKEN_GENERATED="${admin_token}"
+    else
+        log "Admin auth_token already customised; leaving as-is"
+    fi
+    if [[ -n "${viewer_token}" ]]; then
+        log "Generated random viewer_token in ${cfg}"
+        VIEWER_TOKEN_GENERATED="${viewer_token}"
+    else
+        log "viewer_token already customised; leaving as-is"
+    fi
 }
 
 setup_venv() {
@@ -172,6 +280,30 @@ check_camera_overlays() {
     fi
 }
 
+print_token_summary() {
+    if [[ -z "${ADMIN_TOKEN_GENERATED:-}" && -z "${VIEWER_TOKEN_GENERATED:-}" ]]; then
+        return
+    fi
+    printf '\n'
+    log "================================================================"
+    log "AUTH TOKENS"
+    log "These were freshly generated and written to ${CONFIG_DIR}/dualstream.toml."
+    log "Save them somewhere safe; they are not displayed again."
+    log "----------------------------------------------------------------"
+    if [[ -n "${ADMIN_TOKEN_GENERATED:-}" ]]; then
+        log "  admin auth_token (paste into the dual-tile UI at /):"
+        log "      ${ADMIN_TOKEN_GENERATED}"
+    fi
+    if [[ -n "${VIEWER_TOKEN_GENERATED:-}" ]]; then
+        log "  public viewer_token (use in shareable URLs):"
+        log "      ${VIEWER_TOKEN_GENERATED}"
+        log "  Shareable URLs (replace <host> with this Pi's tailnet name):"
+        log "      http://<host>:8080/cam0?key=${VIEWER_TOKEN_GENERATED}"
+        log "      http://<host>:8080/cam1?key=${VIEWER_TOKEN_GENERATED}"
+    fi
+    log "================================================================"
+}
+
 main() {
     require_root
     check_platform
@@ -184,11 +316,11 @@ main() {
     install_systemd_unit
     check_camera_overlays
     log "Install complete. Next steps:"
-    log "  1. Edit ${CONFIG_DIR}/dualstream.toml and change auth_token"
-    log "  2. (If needed) update ${CONFIG_DIR}/dualstream.toml then reboot"
-    log "  3. Run: sudo tailscale up   (if installed and not yet joined)"
-    log "  4. Run: sudo systemctl start dualstream"
-    log "  5. Browse to http://<this-host-tailnet-name>:8080/"
+    log "  1. (If needed) update ${CONFIG_DIR}/dualstream.toml then reboot"
+    log "  2. Run: sudo tailscale up   (if installed and not yet joined)"
+    log "  3. Run: sudo systemctl start dualstream"
+    log "  4. Browse to http://<this-host-tailnet-name>:8080/"
+    print_token_summary
 }
 
 main "$@"

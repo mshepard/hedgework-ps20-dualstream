@@ -31,7 +31,12 @@ DEFAULT_CONFIG_PATHS = (
 class ServerConfig(BaseModel):
     host: str = "0.0.0.0"
     port: int = Field(default=8080, ge=1, le=65535)
+    # Admin bearer token used by the dual-tile diagnostic UI and the /api/*
+    # admin endpoints. Keep this private.
     auth_token: str = "change-me"
+    # Public viewer token used by the per-camera shareable pages (/cam0,
+    # /cam1). Empty string disables the public pages.
+    viewer_token: str = ""
 
 
 class CameraConfig(BaseModel):

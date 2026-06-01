@@ -17,6 +17,8 @@ const els = {
   video1: document.getElementById("video-1"),
   cam0Meta: document.getElementById("cam0-meta"),
   cam1Meta: document.getElementById("cam1-meta"),
+  cam0Share: document.getElementById("cam0-share"),
+  cam1Share: document.getElementById("cam1-share"),
   strip: document.getElementById("snapshot-strip"),
   log: document.getElementById("log"),
 };
@@ -90,8 +92,28 @@ async function refreshStatus() {
         meta.textContent = `${res}@${cam.framerate}fps · ${cam.bitrate_kbps}kbps · ${running}`;
       }
     }
+    updateShareLinks(data.viewer_share_urls || [], data.viewer_token_set);
   } catch (err) {
     log(`status: ${err.message}`, "warn");
+  }
+}
+
+function updateShareLinks(urls, tokenSet) {
+  const slots = { 0: els.cam0Share, 1: els.cam1Share };
+  // Default state: everything disabled.
+  for (const el of Object.values(slots)) {
+    if (!el) continue;
+    el.classList.add("disabled");
+    el.removeAttribute("href");
+    el.title = tokenSet === false
+      ? "viewer_token not set in /etc/dualstream/dualstream.toml"
+      : "Open single-camera view in a new tab";
+  }
+  for (const item of urls) {
+    const el = slots[item.camera_num];
+    if (!el || !item.path) continue;
+    el.href = item.path;
+    el.classList.remove("disabled");
   }
 }
 

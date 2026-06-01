@@ -84,10 +84,15 @@ def main(argv: list[str] | None = None) -> int:
         config.camera1.framerate,
         "on" if config.snapshots.enabled else "off",
     )
-    if config.server.auth_token == "change-me":
+    if config.server.auth_token in ("", "change-me"):
         log.warning(
-            "Server auth_token is the default 'change-me'; set a real token in config "
+            "Server auth_token is the default/empty value; set a real token in config "
             "before any non-bench deployment"
+        )
+    if config.server.viewer_token in ("", "change-me-viewer"):
+        log.warning(
+            "Server viewer_token is the default/empty value; public per-camera pages "
+            "(/cam0, /cam1) will reject requests until a real value is set"
         )
 
     _apply_phase1_power_hooks(config.power.disable_act_led)

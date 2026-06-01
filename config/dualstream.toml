@@ -6,10 +6,18 @@
 [server]
 host = "0.0.0.0"
 port = 8080
-# Bearer token required on the Authorization header for all non-static routes.
-# Change this for any non-bench deployment. Tailscale ACLs remain the primary
-# access control; the token is defense-in-depth.
+# Admin bearer token. Required on the Authorization header for the dual-tile
+# diagnostic UI at /, the /api/status, /api/snapshot, /api/snapshots, and
+# /api/offer endpoints. Change this for any non-bench deployment. Tailscale
+# ACLs remain the primary access control; the token is defense-in-depth.
 auth_token = "change-me"
+# Public viewer token. The per-camera viewer pages at /cam0 and /cam1 only
+# work when the caller presents this token, either as a "?key=<token>" query
+# parameter (the shareable form) or as a Bearer header. Empty disables the
+# public pages entirely. The installer auto-generates a random value on
+# first install. The admin auth_token above is also accepted on the public
+# pages, so an admin can preview them without copying the viewer key.
+viewer_token = "change-me-viewer"
 
 [camera0]
 resolution = [1280, 720]

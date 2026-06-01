@@ -58,10 +58,17 @@ class CameraTrack(VideoStreamTrack):
             self.stop()
             raise MediaStreamError
 
-        if self._frame_count % DIAG_LOG_EVERY == 0:
+        # Frame-content fingerprint diagnostic. Logged at DEBUG, so it only
+        # appears when the service is started with --verbose. Useful for
+        # confirming both cameras are producing distinct frames if the dual
+        # video tiles ever start showing the same content again.
+        if (
+            self._frame_count % DIAG_LOG_EVERY == 0
+            and logger.isEnabledFor(logging.DEBUG)
+        ):
             digest = hashlib.md5(array.tobytes()).hexdigest()[:10]
             first_px = array[0, 0].tolist() if array.size else []
-            logger.info(
+            logger.debug(
                 "cam%d frame#%d shape=%s dtype=%s hash=%s first_px=%s",
                 self.camera.camera_num,
                 self._frame_count,
