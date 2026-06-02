@@ -13,8 +13,11 @@ const els = {
   snapshot: document.getElementById("snapshot-btn"),
   mode: document.getElementById("mode-badge"),
   viewers: document.getElementById("viewer-count"),
+  brandName: document.getElementById("brand-name"),
   video0: document.getElementById("video-0"),
   video1: document.getElementById("video-1"),
+  cam0Name: document.getElementById("cam0-name"),
+  cam1Name: document.getElementById("cam1-name"),
   cam0Meta: document.getElementById("cam0-meta"),
   cam1Meta: document.getElementById("cam1-meta"),
   cam0Share: document.getElementById("cam0-share"),
@@ -22,6 +25,8 @@ const els = {
   strip: document.getElementById("snapshot-strip"),
   log: document.getElementById("log"),
 };
+
+const DEFAULT_SITE_NAME = "HEDGEWORK @ PS 20";
 
 const state = {
   pc: null,
@@ -83,9 +88,14 @@ async function refreshStatus() {
     els.mode.textContent = mode;
     els.mode.className = `mode-badge mode-${mode.toLowerCase()}`;
     els.viewers.textContent = `${data.viewers || 0} viewer${data.viewers === 1 ? "" : "s"}`;
+    applyBranding(data.site_name);
     if (Array.isArray(data.cameras)) {
       for (const cam of data.cameras) {
+        const nameSlot = cam.camera_num === 0 ? els.cam0Name : els.cam1Name;
         const meta = cam.camera_num === 0 ? els.cam0Meta : els.cam1Meta;
+        if (nameSlot && cam.display_name) {
+          nameSlot.textContent = cam.display_name;
+        }
         if (!meta) continue;
         const res = cam.resolution ? `${cam.resolution[0]}x${cam.resolution[1]}` : "--";
         const running = cam.running ? "running" : "idle";
@@ -95,6 +105,17 @@ async function refreshStatus() {
     updateShareLinks(data.viewer_share_urls || [], data.viewer_token_set);
   } catch (err) {
     log(`status: ${err.message}`, "warn");
+  }
+}
+
+function applyBranding(siteName) {
+  const name = (siteName || "").trim() || DEFAULT_SITE_NAME;
+  if (els.brandName && els.brandName.textContent !== name) {
+    els.brandName.textContent = name;
+  }
+  const desiredTitle = `${name} · Admin`;
+  if (document.title !== desiredTitle) {
+    document.title = desiredTitle;
   }
 }
 

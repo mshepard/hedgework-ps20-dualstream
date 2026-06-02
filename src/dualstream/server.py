@@ -198,6 +198,10 @@ class DualStreamServer:
                 # Phase 2 will replace this stub with the real state machine.
                 "mode": "FULL",
                 "viewers": len(self._pcs),
+                # Brand label, so the admin UI title bar can display whatever
+                # the operator put in dualstream.toml (default falls back to
+                # the umbrella project name).
+                "site_name": self.config.server.site_name or "HEDGEWORK @ PS 20",
                 "viewer_token_set": viewer_token_set,
                 # Relative share URLs (so the browser uses whatever host /
                 # scheme the admin loaded the page from). Empty list when
@@ -216,6 +220,7 @@ class DualStreamServer:
                 "cameras": [
                     {
                         "camera_num": cam.camera_num,
+                        "display_name": self._camera_display_name(cam.camera_num),
                         "running": cam.running,
                         "refcount": cam.refcount,
                         "resolution": [cam.quality.width, cam.quality.height],

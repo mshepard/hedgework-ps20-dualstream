@@ -592,3 +592,367 @@ body.cam-page #fullscreen-btn {
   color: #4a4a55;
   pointer-events: none;
 }
+
+/* ========== Admin dual-tile page (Hedgework brand) ==========
+ *
+ * Same Hedgework @ PS 20 palette and typography as the public cam page,
+ * but the admin layout is preserved: sticky pink header on top, two
+ * video tiles, a recent-snapshot strip, and a log panel at the bottom.
+ *
+ * The log panel intentionally stays dark — it's a debugging surface
+ * where monospace-on-dark reads best — but uses deep forest rather than
+ * pure black so it still sits inside the brand palette.
+ *
+ * The brand palette is duplicated from body.cam-page so this block can
+ * be read and reasoned about on its own; keep both blocks in sync if
+ * the palette ever changes.
+ */
+
+body.admin-page {
+  --brand-orange: #ff8c44;
+  --brand-orange-hover: #ff7d2c;
+  --brand-dark: #15312b;
+  --brand-dark-hover: #1f4a3f;
+  --brand-blue: #9eccde;
+  --brand-blue-hover: #8fbed1;
+  --brand-yellow: #f4ef9a;
+  --brand-cream: #fafbfc;
+  --brand-pink: #f6ccd5;
+
+  /* Map the legacy UI tokens onto the brand palette so the generic
+     selectors near the top of the file (.topbar, .mode-badge, .tile,
+     .snapshot-strip, etc.) inherit the brand look for free. */
+  --bg: var(--brand-cream);
+  --panel: var(--brand-pink);
+  --text: var(--brand-dark);
+  --muted: rgba(21, 49, 43, 0.6);
+  --border: rgba(21, 49, 43, 0.12);
+  --accent: var(--brand-orange);
+  --accent-hover: var(--brand-orange-hover);
+  --danger: var(--brand-dark);
+  --ok: var(--brand-dark);
+  --warn: #c29759;
+
+  --cam-bg-image: url("/static/media/PS20-hedgework-ARTWORK-JohannaKindvall-10-alpha.png");
+  --cam-font-stack: "Inter", "Inter Fallback", -apple-system,
+    BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+
+  background-color: var(--bg);
+  background-image: var(--cam-bg-image);
+  background-position: center bottom;
+  background-repeat: no-repeat;
+  /* Slightly smaller than the cam page so the artwork doesn't compete
+     with the denser admin layout. */
+  background-size: min(1400px, 92vw) auto;
+  background-attachment: fixed;
+  min-height: 100vh;
+  font-family: var(--cam-font-stack);
+  font-weight: 400;
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--text);
+}
+
+/* ----- Sticky pink header ----- */
+
+body.admin-page .topbar {
+  background: var(--brand-pink);
+  border-bottom: none;
+  padding: 14px 24px;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+body.admin-page .brand {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  flex: 0 1 auto;
+  min-width: 0;
+  /* Brand line clips, never wraps. */
+  flex-wrap: nowrap;
+  overflow: hidden;
+}
+
+body.admin-page .brand > * {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+body.admin-page .brand-name {
+  /* Same brand mark / typeface as the cam page, one notch smaller because
+     the admin header carries more sibling chrome. */
+  font-family: "Lexend Tera", var(--cam-font-stack);
+  font-weight: 500;
+  font-size: 20px;
+  line-height: 1.2;
+  color: var(--brand-dark);
+  letter-spacing: 0;
+}
+
+body.admin-page .brand-sep {
+  color: var(--brand-dark);
+  opacity: 0.35;
+  font-size: 16px;
+  font-weight: 400;
+}
+
+body.admin-page .brand-role {
+  font-family: var(--cam-font-stack);
+  font-weight: 600;
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--brand-dark);
+}
+
+/* ----- Status pills ----- */
+
+body.admin-page .status-group {
+  margin-left: 8px;
+  gap: 10px;
+}
+
+body.admin-page .mode-badge {
+  background: rgba(255, 255, 255, 0.7);
+  color: var(--brand-dark);
+  border: 1px solid rgba(21, 49, 43, 0.15);
+}
+
+body.admin-page .mode-full {
+  color: var(--brand-dark);
+  border-color: rgba(21, 49, 43, 0.25);
+  background: rgba(255, 255, 255, 0.85);
+}
+body.admin-page .mode-reduced {
+  color: #8a5d18;
+  border-color: rgba(194, 151, 89, 0.45);
+  background: rgba(244, 239, 154, 0.7);
+}
+body.admin-page .mode-snapshot-only,
+body.admin-page .mode-snapshot_only {
+  color: #fff;
+  background: var(--brand-orange);
+  border-color: rgba(255, 140, 68, 0.4);
+}
+body.admin-page .mode-unknown {
+  color: rgba(21, 49, 43, 0.5);
+}
+
+body.admin-page .counter {
+  color: rgba(21, 49, 43, 0.65);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ----- Controls (token field + buttons) ----- */
+
+body.admin-page .controls {
+  margin-left: auto;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+body.admin-page input[type="password"],
+body.admin-page input[type="text"] {
+  background: rgba(255, 255, 255, 0.75);
+  color: var(--brand-dark);
+  border: 1px solid rgba(21, 49, 43, 0.2);
+  border-radius: 4px;
+  padding: 8px 12px;
+  font-family: var(--cam-font-stack);
+  font-size: 13px;
+  width: 200px;
+}
+
+body.admin-page input[type="password"]::placeholder,
+body.admin-page input[type="text"]::placeholder {
+  color: rgba(21, 49, 43, 0.4);
+}
+
+body.admin-page input[type="password"]:focus,
+body.admin-page input[type="text"]:focus {
+  outline: none;
+  border-color: var(--brand-dark);
+  background: rgba(255, 255, 255, 0.95);
+}
+
+body.admin-page button {
+  font-family: var(--cam-font-stack);
+  background: var(--brand-orange);
+  color: #fff;
+  font-weight: 500;
+  font-size: 13px;
+  letter-spacing: 0.02em;
+  border-radius: 4px;
+  padding: 8px 16px;
+  border: none;
+  transition: background-color 0.12s ease, opacity 0.12s ease;
+}
+
+body.admin-page button:hover:not(:disabled) {
+  background: var(--brand-orange-hover);
+}
+
+body.admin-page button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* Stop = brand-dark (a stronger "halt" gesture than orange). Disabled
+   variant keeps the dark background and white text so the label stays
+   legible even when faded. */
+body.admin-page #stop-btn,
+body.admin-page #stop-btn:disabled {
+  background: var(--brand-dark);
+  color: #fff;
+}
+body.admin-page #stop-btn:hover:not(:disabled) {
+  background: var(--brand-dark-hover);
+}
+
+/* Snapshot = sky blue (a third, calmer action). Dark text on light blue
+   reads better than white. */
+body.admin-page #snapshot-btn {
+  background: var(--brand-blue);
+  color: var(--brand-dark);
+}
+body.admin-page #snapshot-btn:hover:not(:disabled) {
+  background: var(--brand-blue-hover);
+}
+
+/* ----- Main / tile grid ----- */
+
+body.admin-page main {
+  padding: 24px 24px 64px;
+}
+
+body.admin-page .grid {
+  gap: 20px;
+}
+
+body.admin-page .tile {
+  background: #111;
+  border: 1px solid rgba(21, 49, 43, 0.12);
+  border-radius: 8px;
+  box-shadow:
+    0 1px 2px rgba(21, 49, 43, 0.05),
+    0 14px 40px rgba(21, 49, 43, 0.08);
+}
+
+body.admin-page .tile figcaption {
+  background: rgba(255, 255, 255, 0.85);
+  border-top: 1px solid rgba(21, 49, 43, 0.08);
+  color: var(--brand-dark);
+  padding: 10px 14px;
+  font-size: 13px;
+}
+
+body.admin-page .tile-label {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  font-weight: 600;
+}
+
+body.admin-page .tile-share {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--brand-orange);
+  text-decoration: none;
+}
+body.admin-page .tile-share:hover {
+  color: var(--brand-orange-hover);
+  text-decoration: underline;
+}
+body.admin-page .tile-share.disabled {
+  color: rgba(21, 49, 43, 0.35);
+  pointer-events: none;
+}
+
+body.admin-page .meta {
+  color: rgba(21, 49, 43, 0.55);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ----- Snapshot strip ----- */
+
+body.admin-page .snapshots {
+  margin-top: 32px;
+}
+
+body.admin-page .snapshots h2 {
+  color: var(--brand-dark);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+}
+
+body.admin-page .snapshot-strip .empty {
+  color: rgba(21, 49, 43, 0.5);
+}
+
+body.admin-page .snapshot-strip a {
+  background: rgba(255, 255, 255, 0.7);
+  border: 1px solid rgba(21, 49, 43, 0.1);
+  border-radius: 6px;
+  color: rgba(21, 49, 43, 0.7);
+}
+body.admin-page .snapshot-strip a:hover {
+  border-color: var(--brand-orange);
+}
+
+body.admin-page .snapshot-strip .caption {
+  background: rgba(21, 49, 43, 0.75);
+  color: #fff;
+}
+
+/* ----- Log panel (kept dark for readability) -----
+ *
+ * Logs are a developer-facing console; switching them to the light
+ * cream theme would force every entry to use brand-dark text on cream
+ * and reduce contrast. Instead we hold a deep-forest dark panel with
+ * sage text, keyed off the brand palette so it still feels native. */
+
+body.admin-page .log {
+  background: #0f2722;
+  border: 1px solid rgba(21, 49, 43, 0.4);
+  border-radius: 6px;
+  color: #c5d6c8;
+  margin-top: 28px;
+}
+
+body.admin-page .log .entry.err { color: #f08a82; }
+body.admin-page .log .entry.warn { color: #e2c987; }
+body.admin-page .log .entry.ok { color: #9fd6a0; }
+
+/* ----- Narrow screens ----- */
+
+@media (max-width: 760px) {
+  body.admin-page {
+    background-size: min(1400px, 140vw) auto;
+  }
+  body.admin-page .topbar {
+    padding: 12px 16px;
+  }
+  body.admin-page .brand-name {
+    font-size: 15px;
+  }
+  body.admin-page .brand-role {
+    font-size: 11px;
+  }
+  body.admin-page main {
+    padding: 16px 12px 32px;
+  }
+  body.admin-page input[type="password"],
+  body.admin-page input[type="text"] {
+    width: 100%;
+    flex: 1 1 100%;
+  }
+  body.admin-page .controls {
+    flex: 1 1 100%;
+  }
+}

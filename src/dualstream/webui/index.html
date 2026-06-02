@@ -3,12 +3,27 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>DualStream</title>
+    <title>HEDGEWORK @ PS 20 · Admin</title>
+    <link rel="icon" type="image/png" href="/static/media/Hedge-icon.png" />
+    <link rel="apple-touch-icon" href="/static/media/Hedge-icon.png" />
+    <!-- Inter (UI / body) + Lexend Tera (brand mark) — same loadout as the
+         public cam page so both surfaces share typography. Falls back to a
+         system sans when fonts.googleapis.com is unreachable. -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Lexend+Tera:wght@400;500;700&display=swap"
+    />
     <link rel="stylesheet" href="/static/style.css" />
   </head>
-  <body>
+  <body class="admin-page">
     <header class="topbar">
-      <div class="brand">DualStream</div>
+      <div class="brand">
+        <span id="brand-name" class="brand-name">HEDGEWORK @ PS 20</span>
+        <span class="brand-sep">·</span>
+        <span class="brand-role">Admin</span>
+      </div>
       <div class="status-group">
         <span id="mode-badge" class="mode-badge mode-unknown" title="Power mode">--</span>
         <span id="viewer-count" class="counter" title="Active viewers">0 viewers</span>
@@ -32,8 +47,8 @@
         <figure class="tile">
           <video id="video-0" autoplay playsinline muted></video>
           <figcaption>
-            <span>
-              Camera 0
+            <span class="tile-label">
+              <span id="cam0-name">Camera 0</span>
               <a id="cam0-share" class="tile-share disabled" href="#" target="_blank" rel="noopener" title="Open single-camera view in a new tab">↗ single view</a>
             </span>
             <span id="cam0-meta" class="meta">--</span>
@@ -42,8 +57,8 @@
         <figure class="tile">
           <video id="video-1" autoplay playsinline muted></video>
           <figcaption>
-            <span>
-              Camera 1
+            <span class="tile-label">
+              <span id="cam1-name">Camera 1</span>
               <a id="cam1-share" class="tile-share disabled" href="#" target="_blank" rel="noopener" title="Open single-camera view in a new tab">↗ single view</a>
             </span>
             <span id="cam1-meta" class="meta">--</span>
