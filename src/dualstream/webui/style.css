@@ -323,6 +323,11 @@ body.cam-page {
 /* ----- Header ----- */
 
 body.cam-page .cam-topbar {
+  /* Flexbox horizontal bar. The standalone .cam-topbar rule used to set
+   * display: flex itself, but during the brand-theme refactor that rule
+   * was folded into here — without this declaration the bar renders as
+   * a plain block and the brand / controls stack vertically. */
+  display: flex;
   background: var(--brand-pink);
   border-bottom: none;
   padding: 16px 32px;
