@@ -73,6 +73,18 @@ The installer:
 
 Re-running the installer is safe.
 
+### Updating after a `git pull`
+
+The installer does a **non-editable** pip install, which copies the source into `/opt/dualstream/.venv`. A bare `git pull` updates the working tree but **does not** update the running copy. To pick up new code:
+
+```bash
+cd ~/DualStream                    # wherever you cloned it
+git pull
+sudo bash scripts/update.sh        # fast: re-installs the package + restarts the service
+```
+
+`scripts/update.sh` does only the necessary parts of `install.sh` (rebuild the dualstream package, fix ownership, restart the service) so it takes seconds rather than minutes. The full installer still works for upgrades that need apt or systemd changes.
+
 **At the end of the install, the script prints the freshly generated tokens.** Copy them — they are not displayed again. You can always re-read them from the config file with `sudo cat /etc/dualstream/dualstream.toml`.
 
 ## Configure

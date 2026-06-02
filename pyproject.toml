@@ -30,4 +30,11 @@ dualstream = "dualstream.__main__:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-dualstream = ["webui/*"]
+# Ship every static UI asset, including files nested in subdirectories
+# (webui/media/*.png, etc.). The bare `webui/*` glob does NOT recurse.
+dualstream = [
+    "webui/*.html",
+    "webui/*.js",
+    "webui/*.css",
+    "webui/media/*",
+]
