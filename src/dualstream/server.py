@@ -282,7 +282,7 @@ class DualStreamServer:
     async def _public_info(self, request: web.Request) -> web.Response:
         return web.json_response(
             {
-                "site_name": self.config.server.site_name or "DualStream",
+                "site_name": self.config.server.site_name or "Hedgework @ PS 20",
                 "cameras": [
                     {
                         "camera_num": cam.camera_num,

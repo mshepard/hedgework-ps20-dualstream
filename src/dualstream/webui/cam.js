@@ -25,7 +25,7 @@ const state = {
   cameraNum: null,
   key: null,
   pc: null,
-  siteName: "DualStream",
+  siteName: "Hedgework @ PS 20",
   cameraName: null,
   // Holds {url, timestamp, filename} of the most recent snapshot we've
   // fetched. Used to drive the <video> poster so the page shows a still
