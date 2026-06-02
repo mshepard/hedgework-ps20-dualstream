@@ -4,12 +4,23 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>DualStream · Camera</title>
+    <!-- Inter is the brand typeface used on https://ps20.hedgework.net/.
+         If the browser can't reach fonts.googleapis.com the CSS falls
+         back to a system sans-serif so the page still renders cleanly
+         (e.g. if Tailscale is the only network and the host has no
+         internet egress). -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+    />
     <link rel="stylesheet" href="/static/style.css" />
   </head>
   <body class="cam-page">
     <header class="cam-topbar">
       <div class="brand">
-        <span class="brand-name">DualStream</span>
+        <span id="brand-name" class="brand-name">DualStream</span>
         <span class="brand-sep">·</span>
         <span id="cam-label">Camera ?</span>
         <span id="snapshot-meta" class="snapshot-meta"></span>

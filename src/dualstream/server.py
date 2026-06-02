@@ -35,6 +35,9 @@ Endpoints:
                                               public per-camera pages can
                                               show a still poster when the
                                               live stream isn't running)
+    GET  /api/public/info                 -> site_name + per-camera display
+                                              names for branding the public
+                                              pages
 
 Phase 2 will fold the real power-mode state machine into /api/status, add
 /api/admin/force_mode for testing, and gate the offer endpoints on mode.
@@ -165,6 +168,7 @@ class DualStreamServer:
         app.router.add_get(
             "/api/public/snapshots/latest", self._public_latest_snapshot
         )
+        app.router.add_get("/api/public/info", self._public_info)
 
         # Static assets.
         app.router.add_static("/snapshots", self.snapshots.base_path, show_index=False)
@@ -266,6 +270,28 @@ class DualStreamServer:
                 {"error": f"unknown camera: {camera}"}, status=400
             )
         return await self._negotiate_video_offer([camera], sdp, type_)
+
+    def _camera_display_name(self, camera_num: int) -> str:
+        """Resolve the human-friendly label for a camera, falling back to
+        "Camera N" when no name is configured."""
+        cfg = getattr(self.config, f"camera{camera_num}", None)
+        if cfg is not None and getattr(cfg, "name", ""):
+            return cfg.name
+        return f"Camera {camera_num}"
+
+    async def _public_info(self, request: web.Request) -> web.Response:
+        return web.json_response(
+            {
+                "site_name": self.config.server.site_name or "DualStream",
+                "cameras": [
+                    {
+                        "camera_num": cam.camera_num,
+                        "display_name": self._camera_display_name(cam.camera_num),
+                    }
+                    for cam in self.cameras.all()
+                ],
+            }
+        )
 
     async def _public_latest_snapshot(self, request: web.Request) -> web.Response:
         raw = request.query.get("camera")

@@ -255,84 +255,236 @@ main {
 .log .entry.warn { color: var(--warn); }
 .log .entry.ok { color: var(--ok); }
 
-/* ---------- Per-camera public viewer ---------- */
+/* ---------- Per-camera public viewer ----------
+ *
+ * The cam pages use a completely separate theme matching the umbrella
+ * Hedgework @ PS 20 brand (https://ps20.hedgework.net/): Inter typeface,
+ * dusty pink header, dark forest body text, orange accent buttons,
+ * off-white body background. The PS-20 hedgework artwork (by Johanna
+ * Kindvall) is anchored to the bottom of the viewport as a fixed
+ * background so plants appear to grow up from the foot of the page.
+ *
+ * Brand palette (lifted directly from the site's --theme-palette-color-N):
+ *   #ff8c44   orange (accent, primary buttons)
+ *   #15312b   dark forest green (text + headings + secondary buttons)
+ *   #9eccde   sky blue (borders)
+ *   #f4ef9a   pale yellow (warm accent)
+ *   #FAFBFC   off-white (body background)
+ *   #f6ccd5   dusty pink (header background)
+ */
 
-.cam-page {
+body.cam-page {
+  --brand-orange: #ff8c44;
+  --brand-orange-hover: #ff7d2c;
+  --brand-dark: #15312b;
+  --brand-dark-hover: #1f4a3f;
+  --brand-blue: #9eccde;
+  --brand-yellow: #f4ef9a;
+  --brand-cream: #fafbfc;
+  --brand-pink: #f6ccd5;
+
+  /* Reuse the existing variable names so legacy rules in this file pick
+     up the new theme too. */
+  --bg: var(--brand-cream);
+  --panel: var(--brand-pink);
+  --text: var(--brand-dark);
+  --muted: rgba(21, 49, 43, 0.6);
+  --border: var(--brand-blue);
+  --accent: var(--brand-orange);
+  --accent-hover: var(--brand-orange-hover);
+  --danger: var(--brand-dark);
+  --danger-hover: var(--brand-dark-hover);
+  --ok: var(--brand-dark);
+  --warn: #c29759;
+
+  --cam-bg-image: url("/static/media/PS20-hedgework-ARTWORK-JohannaKindvall-10-alpha.png");
+  --cam-font-stack: "Inter", "Inter Fallback", -apple-system,
+    BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+
+  background-color: var(--bg);
+  background-image: var(--cam-bg-image);
+  background-position: center bottom;
+  background-repeat: no-repeat;
+  /* Cap how tall the artwork can grow so it doesn't crowd the video on
+     short, wide screens; cap how wide on huge displays so plants stay
+     proportional rather than stretching across miles. */
+  background-size: min(1600px, 95vw) auto;
+  background-attachment: fixed;
   min-height: 100vh;
   display: flex;
   flex-direction: column;
+  font-family: var(--cam-font-stack);
+  font-weight: 400;
+  font-size: 16px;
+  line-height: 1.65;
+  color: var(--text);
 }
 
-.cam-topbar {
-  display: flex;
+/* ----- Header ----- */
+
+body.cam-page .cam-topbar {
+  background: var(--brand-pink);
+  border-bottom: none;
+  padding: 16px 32px;
+  gap: 14px;
   align-items: center;
-  gap: 12px;
-  padding: 10px 16px;
-  background: var(--panel);
-  border-bottom: 1px solid var(--border);
-  flex-wrap: wrap;
 }
 
-.cam-topbar .brand {
+body.cam-page .cam-topbar .brand {
   display: flex;
   align-items: baseline;
-  gap: 6px;
+  gap: 12px;
+  flex-wrap: wrap;
+  min-width: 0;
 }
 
-.cam-topbar .brand-name {
-  font-weight: 600;
+body.cam-page .cam-topbar .brand-name {
+  font-family: var(--cam-font-stack);
+  font-weight: 500;
+  font-size: 28px;
+  line-height: 1.2;
+  letter-spacing: -0.01em;
+  color: var(--brand-dark);
+}
+
+body.cam-page .cam-topbar .brand-sep {
+  color: var(--brand-dark);
+  opacity: 0.4;
   font-size: 16px;
+  font-weight: 400;
 }
 
-.cam-topbar .brand-sep {
-  color: var(--muted);
-}
-
-.snapshot-meta {
-  color: var(--muted);
+body.cam-page #cam-label {
+  font-family: var(--cam-font-stack);
+  font-weight: 600;
   font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--brand-dark);
+}
+
+body.cam-page .snapshot-meta {
+  font-family: var(--cam-font-stack);
+  color: rgba(21, 49, 43, 0.55);
+  font-size: 12px;
+  font-weight: 400;
   font-variant-numeric: tabular-nums;
-  margin-left: 6px;
+  margin-left: 4px;
+  font-style: normal;
 }
 
-.cam-topbar .controls {
+/* ----- Buttons ----- */
+
+body.cam-page .controls {
   margin-left: auto;
+  gap: 10px;
+  display: flex;
+  align-items: center;
 }
 
-#fullscreen-btn {
-  background: #4a4a55;
-  padding: 7px 10px;
+body.cam-page button {
+  font-family: var(--cam-font-stack);
+  background: var(--brand-orange);
+  color: #fff;
+  font-weight: 500;
+  font-size: 14px;
+  letter-spacing: 0.02em;
+  border-radius: 4px;
+  padding: 9px 20px;
+  min-height: 40px;
+  border: none;
+  box-shadow: none;
+  transition: background-color 0.12s ease;
 }
 
-#fullscreen-btn:hover:not(:disabled) {
-  background: #5e5e6e;
+body.cam-page button:hover:not(:disabled) {
+  background: var(--brand-orange-hover);
 }
+
+body.cam-page button:disabled {
+  background: rgba(21, 49, 43, 0.12);
+  color: rgba(21, 49, 43, 0.4);
+}
+
+body.cam-page #stop-btn {
+  background: var(--brand-dark);
+}
+
+body.cam-page #stop-btn:hover:not(:disabled) {
+  background: var(--brand-dark-hover);
+}
+
+body.cam-page #fullscreen-btn {
+  background: rgba(255, 255, 255, 0.55);
+  color: var(--brand-dark);
+  padding: 9px 14px;
+  border: 1px solid rgba(21, 49, 43, 0.15);
+}
+
+body.cam-page #fullscreen-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.85);
+  border-color: rgba(21, 49, 43, 0.25);
+}
+
+/* ----- Video stage ----- */
 
 .cam-main {
   flex: 1;
   display: flex;
-  padding: 16px;
+  justify-content: center;
+  align-items: flex-start;
+  padding: 32px 32px 48px;
   min-height: 0;
 }
 
 .cam-stage {
-  flex: 1;
   position: relative;
-  background: black;
-  border: 1px solid var(--border);
+  background: #111;
   border-radius: 8px;
   overflow: hidden;
   display: flex;
-  align-items: stretch;
-  justify-content: stretch;
+  width: 100%;
+  max-width: 1280px;
+  aspect-ratio: 16 / 9;
+  border: 1px solid rgba(21, 49, 43, 0.08);
+  box-shadow:
+    0 1px 2px rgba(21, 49, 43, 0.06),
+    0 14px 40px rgba(21, 49, 43, 0.10);
 }
 
 .cam-stage video {
   width: 100%;
   height: 100%;
   object-fit: contain;
-  background: black;
+  background: #111;
   display: block;
+}
+
+/* On narrow screens, full-bleed the stage and shrink the header type. */
+@media (max-width: 640px) {
+  body.cam-page {
+    background-size: min(1600px, 140vw) auto;
+  }
+  body.cam-page .cam-topbar {
+    padding: 12px 16px;
+  }
+  body.cam-page .cam-topbar .brand-name {
+    font-size: 20px;
+  }
+  body.cam-page #cam-label {
+    font-size: 11px;
+  }
+  body.cam-page button {
+    padding: 8px 14px;
+    font-size: 13px;
+    min-height: 36px;
+  }
+  .cam-main {
+    padding: 16px 12px 32px;
+  }
+  .cam-stage {
+    border-radius: 6px;
+  }
 }
 
 /* The overlay sits over the video/poster; we keep the backdrop transparent

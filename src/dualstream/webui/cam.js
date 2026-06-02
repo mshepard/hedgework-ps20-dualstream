@@ -12,6 +12,7 @@ const els = {
   start: document.getElementById("start-btn"),
   stop: document.getElementById("stop-btn"),
   fullscreen: document.getElementById("fullscreen-btn"),
+  brand: document.getElementById("brand-name"),
   label: document.getElementById("cam-label"),
   snapshotMeta: document.getElementById("snapshot-meta"),
   video: document.getElementById("video"),
@@ -24,6 +25,8 @@ const state = {
   cameraNum: null,
   key: null,
   pc: null,
+  siteName: "DualStream",
+  cameraName: null,
   // Holds {url, timestamp, filename} of the most recent snapshot we've
   // fetched. Used to drive the <video> poster so the page shows a still
   // image when the live stream isn't running.
@@ -152,6 +155,37 @@ function teardown() {
   els.stop.disabled = true;
 }
 
+async function fetchBranding() {
+  if (!state.key) return;
+  try {
+    const resp = await fetch(
+      `/api/public/info?key=${encodeURIComponent(state.key)}`,
+      { cache: "no-store" },
+    );
+    if (!resp.ok) return;
+    const data = await resp.json();
+    if (data.site_name) state.siteName = data.site_name;
+    const cam = (data.cameras || []).find(
+      (c) => c.camera_num === state.cameraNum,
+    );
+    if (cam && cam.display_name) {
+      state.cameraName = cam.display_name;
+    }
+    applyBranding();
+  } catch (_) {
+    // Best-effort; default branding stays in place.
+  }
+}
+
+function applyBranding() {
+  if (state.cameraName == null) {
+    state.cameraName = `Camera ${state.cameraNum}`;
+  }
+  els.brand.textContent = state.siteName;
+  els.label.textContent = state.cameraName;
+  document.title = `${state.siteName} · ${state.cameraName}`;
+}
+
 async function refreshLatestSnapshot() {
   if (!state.key || state.cameraNum == null) return;
   try {
@@ -220,8 +254,9 @@ function init() {
     els.start.disabled = true;
     return;
   }
-  els.label.textContent = `Camera ${state.cameraNum}`;
-  document.title = `DualStream · Camera ${state.cameraNum}`;
+  // Apply provisional branding immediately so the page doesn't flash
+  // "DualStream · Camera ?" before the /api/public/info fetch lands.
+  applyBranding();
 
   if (!state.key) {
     showOverlay(
@@ -236,6 +271,9 @@ function init() {
   els.start.addEventListener("click", startStreaming);
   els.stop.addEventListener("click", stop);
   els.fullscreen.addEventListener("click", toggleFullscreen);
+
+  // Fetch the site / camera display names (best effort).
+  fetchBranding();
 
   // Latest-snapshot polling: kicks in immediately so the visitor sees a
   // current still image before they (optionally) click Start. Continues

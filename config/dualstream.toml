@@ -18,6 +18,10 @@ auth_token = "change-me"
 # first install. The admin auth_token above is also accepted on the public
 # pages, so an admin can preview them without copying the viewer key.
 viewer_token = "change-me-viewer"
+# Brand / site label shown on the public per-camera pages and in browser
+# tabs. Empty falls back to "DualStream". Matches the umbrella project
+# brand at https://ps20.hedgework.net/.
+site_name = "HEDGEWORK @ PS 20"
 
 [camera0]
 resolution = [1280, 720]
@@ -25,12 +29,16 @@ framerate = 15
 bitrate_kbps = 1000
 # IMX708 sensor controls passed through to picamera2. Keep empty unless tuning.
 controls = {}
+# Optional human-friendly label shown on the public /cam0 page. Empty falls
+# back to "Camera 0".
+name = ""
 
 [camera1]
 resolution = [1280, 720]
 framerate = 15
 bitrate_kbps = 1000
 controls = {}
+name = ""
 
 [snapshots]
 enabled = true

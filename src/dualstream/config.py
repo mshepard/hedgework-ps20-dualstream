@@ -37,6 +37,9 @@ class ServerConfig(BaseModel):
     # Public viewer token used by the per-camera shareable pages (/cam0,
     # /cam1). Empty string disables the public pages.
     viewer_token: str = ""
+    # Display label shown as the brand on the public per-camera pages and
+    # in the browser tab title. Falls back to "DualStream" when empty.
+    site_name: str = ""
 
 
 class CameraConfig(BaseModel):
@@ -44,6 +47,9 @@ class CameraConfig(BaseModel):
     framerate: int = Field(default=15, ge=1, le=60)
     bitrate_kbps: int = Field(default=1000, ge=100, le=10_000)
     controls: dict[str, Any] = Field(default_factory=dict)
+    # Optional human-friendly label for the public per-camera page header
+    # (e.g. "Pasture View"). Falls back to "Camera N" when empty.
+    name: str = ""
 
     @field_validator("resolution", mode="before")
     @classmethod
