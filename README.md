@@ -142,9 +142,50 @@ Paste the **admin `auth_token`** from the config into the token field at the top
 http://<pi-tailnet-name>:8080/cam0?key=<viewer_token>
 http://<pi-tailnet-name>:8080/cam1?key=<viewer_token>
 ```
-Each is a single-camera page with Start, Stop, and Fullscreen — no log, no token field. The URL is the access credential, so treat it like a password. Tailscale ACLs are still the outer access gate.
+Each is a single-camera page with Start, Stop, and Fullscreen — no log, no token field. The URL is the access credential, so treat it like a password.
 
 While the live stream is not running, the page displays the most recent snapshot as a still preview (auto-refreshed every 30 s) so visitors immediately see what's on camera without needing to start a WebRTC session. The header shows "last snapshot HH:MM:SS" to confirm freshness.
+
+### Exposing the public pages over the internet (Tailscale Funnel)
+
+By default, the URLs above are reachable only by clients on the same tailnet. If you want guests to view the cameras *without* installing the Tailscale client, enable **Tailscale Funnel** — it terminates HTTPS at Tailscale's edge and tunnels traffic to the Pi over the connection it already holds open outbound, so the LTE router doesn't need any inbound port forwarding.
+
+**One-time prep in the admin console:**
+1. **DNS → MagicDNS**: enabled.
+2. **DNS → HTTPS Certificates**: **Enable HTTPS**.
+3. **Access Controls (ACL)** — grant the `funnel` attribute to the node (replace the target with your own tag or user as appropriate):
+
+   ```json
+   "nodeAttrs": [
+     { "target": ["autogroup:member"], "attr": ["funnel"] }
+   ]
+   ```
+
+**Turn it on, on the Pi:**
+
+```bash
+sudo tailscale funnel --bg 8080
+sudo tailscale funnel status     # confirm
+```
+
+The whole dualstream surface is now reachable as `https://<hostname>.<tailnet>.ts.net/…` (find the hostname with `tailscale status --self`). All credential checks still apply, so:
+
+| Public path | What it does |
+|---|---|
+| `/cam0?key=<viewer_token>` | live viewer page for camera 0 |
+| `/cam1?key=<viewer_token>` | live viewer page for camera 1 |
+| `/` (admin UI) | renders, but the JS / APIs all require the admin `auth_token` |
+| `/snapshots/<...>?key=…` | snapshot JPEGs — gated by the viewer or admin token |
+| `/api/public/*`, `/api/*` | as documented above (viewer or admin token) |
+
+Snapshot JPEGs and the snapshot-list API both require the viewer token (or admin token), so even when the service is reachable from the public internet, nobody can enumerate `/snapshots/cameraN/YYYYMMDD/HHMMSS.jpg` without holding a valid credential. The snapshot URLs returned by the APIs already include `?key=…` so the `<img>` and `<video poster>` tags load them transparently.
+
+To turn Funnel back off:
+
+```bash
+sudo tailscale funnel --bg --https=443 off
+sudo tailscale serve reset
+```
 
 ## Phase 1 validation checklist
 
@@ -194,4 +235,5 @@ DualStream/
 - **High CPU**: lower `framerate` or `resolution` in the per-camera config. Phase 2's `REDUCED` mode will do this automatically based on battery state.
 - **401 from API**: paste the admin `auth_token` (from `/etc/dualstream/dualstream.toml`) into the dual-tile UI's token field, or set `Authorization: Bearer ...` on your `curl` calls.
 - **`/cam0` says "Access key required"**: open the URL with `?key=<viewer_token>` appended (the admin UI's per-tile "↗ single view" link does this automatically once you're authenticated). If `viewer_token` is empty in the config, the public endpoints are disabled by design and the page will refuse to negotiate.
+- **Snapshot JPEG URL returns 401**: `/snapshots/*` is no longer anonymous — the APIs (`/api/snapshots`, `/api/public/snapshots/latest`, `/api/snapshot`) emit URLs already keyed with `?key=…`. If you copied a snapshot URL from before the gating was added, refresh the snapshot strip / latest-snapshot poll so the page picks up new URLs.
 - **Forgot your tokens**: `sudo cat /etc/dualstream/dualstream.toml` shows both. To rotate, edit the file (set either value back to the placeholder `"change-me"` / `"change-me-viewer"` then re-run `sudo bash scripts/install.sh`, or just paste in your own new random string) and `sudo systemctl restart dualstream`.

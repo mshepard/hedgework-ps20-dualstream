@@ -11,6 +11,13 @@ Two distinct surfaces:
     "?key=<token>" query parameter (or, equivalently, a Bearer header). The
     page has just the video plus Start/Stop/Fullscreen controls.
 
+The auth ladder is designed so the whole HTTP surface can be safely
+exposed to the public internet via Tailscale Funnel (or a similar
+reverse proxy) without any path filtering on the proxy side. In
+particular, the snapshot JPEG store is no longer wide-open static
+content — it requires the viewer_token (or admin token) just like the
+public API.
+
 Endpoints:
 
   Static / unauthenticated:
@@ -18,8 +25,7 @@ Endpoints:
                                        calls it makes still require admin
                                        bearer token)
     GET  /cam0, /cam1              -> public per-camera viewer HTML
-    GET  /static/<file>            -> UI assets
-    GET  /snapshots/<path>         -> static snapshot JPEG files
+    GET  /static/<file>            -> UI assets (CSS / JS / images / favicon)
     GET  /health                   -> liveness probe
 
   Admin (admin auth_token required, Bearer header):
@@ -38,6 +44,13 @@ Endpoints:
     GET  /api/public/info                 -> site_name + per-camera display
                                               names for branding the public
                                               pages
+    GET  /snapshots/<path>                -> static snapshot JPEG. URLs are
+                                              emitted by the APIs above with
+                                              "?key=<token>" already
+                                              appended so <img>/<video
+                                              poster> tags load them
+                                              without an Authorization
+                                              header.
 
 Phase 2 will fold the real power-mode state machine into /api/status, add
 /api/admin/force_mode for testing, and gate the offer endpoints on mode.
@@ -64,17 +77,21 @@ logger = logging.getLogger("dualstream.server")
 
 WEBUI_DIR = Path(__file__).resolve().parent / "webui"
 
-# Paths that bypass auth entirely. Static UI must be reachable anonymously
-# so the browser can load the page (which then sends the appropriate token
-# on subsequent API calls). Embedded snapshot <img> tags can't carry
-# Authorization headers either.
-UNAUTH_PREFIXES = ("/static/", "/snapshots/")
+# Paths that bypass auth entirely. The static UI bundle and the four HTML
+# pages (admin, two cam pages, /health) need to be reachable anonymously
+# so the browser can load them before it has a token to send. Everything
+# data-bearing is gated below.
+UNAUTH_PREFIXES = ("/static/",)
 UNAUTH_EXACT = {"/", "/health", "/cam0", "/cam1"}
 
-# Prefix for endpoints that accept the viewer token (or admin token) via
-# Bearer header OR ?key= query parameter. Everything else requires admin
-# auth via Bearer header only.
+# Endpoints that accept the viewer_token (or admin_token) via Bearer
+# header OR "?key=" query parameter. /api/public/* is the JSON public
+# surface; /snapshots/* is the snapshot JPEG store, which must be
+# reachable via <img src=…> / <video poster=…>, so it can't require a
+# Bearer header — the URLs returned by the snapshot APIs already carry
+# "?key=" so those tags work out of the box.
 PUBLIC_API_PREFIX = "/api/public/"
+PUBLIC_FILE_PREFIXES = ("/snapshots/",)
 
 
 def _extract_token(request: web.Request) -> str | None:
@@ -94,8 +111,15 @@ def _make_auth_middleware(admin_token: str, viewer_token: str):
         if path in UNAUTH_EXACT or any(path.startswith(p) for p in UNAUTH_PREFIXES):
             return await handler(request)
 
-        if path.startswith(PUBLIC_API_PREFIX):
-            if not viewer_token:
+        is_public_api = path.startswith(PUBLIC_API_PREFIX)
+        is_public_file = any(path.startswith(p) for p in PUBLIC_FILE_PREFIXES)
+        if is_public_api or is_public_file:
+            # /api/public/* requires that the operator has opted into
+            # public access by setting a viewer_token. /snapshots/* still
+            # works for the admin (via admin_token) even when public
+            # viewing is disabled, since the admin dual-tile snapshot
+            # strip needs to load JPEGs.
+            if is_public_api and not viewer_token:
                 return web.json_response(
                     {"error": "public endpoints disabled (viewer_token not set)"},
                     status=503,
@@ -105,7 +129,10 @@ def _make_auth_middleware(admin_token: str, viewer_token: str):
                 return web.json_response(
                     {"error": "missing access key"}, status=401
                 )
-            if provided != viewer_token and provided != admin_token:
+            accepted = {admin_token}
+            if viewer_token:
+                accepted.add(viewer_token)
+            if provided not in accepted:
                 return web.json_response(
                     {"error": "invalid access key"}, status=401
                 )
@@ -284,6 +311,28 @@ class DualStreamServer:
             return cfg.name
         return f"Camera {camera_num}"
 
+    def _snapshot_url_key(self) -> str:
+        """Token embedded in /snapshots/* URLs so <img>/<video poster=…>
+        tags can load JPEGs without an Authorization header.
+
+        Prefers viewer_token because that's the URL-safe credential by
+        design (random, opaque, no special chars). Falls back to
+        admin_token when public viewing is disabled — in that case only
+        the admin page consumes these URLs anyway, and putting the admin
+        token in <img src=…> is the only way to keep the snapshot strip
+        working without a cookie/CSRF layer."""
+        return self.config.server.viewer_token or self.config.server.auth_token
+
+    def _keyed_snapshot_url(self, url: str) -> str:
+        """Append "?key=…" to a /snapshots/* URL so it satisfies the
+        public-file auth branch. URLs that already carry a query string
+        are returned unchanged (defensive — shouldn't happen in practice
+        because we build these URLs ourselves)."""
+        key = self._snapshot_url_key()
+        if not key or "?" in url:
+            return url
+        return f"{url}?key={key}"
+
     async def _public_info(self, request: web.Request) -> web.Response:
         return web.json_response(
             {
@@ -323,7 +372,7 @@ class DualStreamServer:
         return web.json_response(
             {
                 "camera": camera,
-                "url": item["url"],
+                "url": self._keyed_snapshot_url(item["url"]),
                 "timestamp": item["timestamp"],
                 "filename": item["filename"],
             }
@@ -448,7 +497,9 @@ class DualStreamServer:
                 "saved": {
                     str(cam_num): {
                         "filename": p.name,
-                        "url": f"/snapshots/{p.relative_to(self.snapshots.base_path).as_posix()}",
+                        "url": self._keyed_snapshot_url(
+                            f"/snapshots/{p.relative_to(self.snapshots.base_path).as_posix()}"
+                        ),
                     }
                     for cam_num, p in results.items()
                 }
@@ -470,6 +521,10 @@ class DualStreamServer:
             except ValueError:
                 return web.json_response({"error": "camera must be an int"}, status=400)
         items = self.snapshots.list_snapshots(camera_num=camera_num, limit=limit)
+        # Rewrite each url field so the admin <img> tags can fetch the
+        # JPEG through the new auth middleware (?key=… appended).
+        for item in items:
+            item["url"] = self._keyed_snapshot_url(item["url"])
         return web.json_response({"snapshots": items})
 
     async def _on_shutdown(self, app: web.Application) -> None:
