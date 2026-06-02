@@ -328,22 +328,46 @@ body.cam-page .cam-topbar {
   padding: 16px 32px;
   gap: 14px;
   align-items: center;
+  /* Force everything onto a single row: brand on the left, controls on
+   * the right. The brand area can shrink (and truncate with ellipsis) so
+   * that the controls never wrap below it. */
+  flex-wrap: nowrap;
 }
 
 body.cam-page .cam-topbar .brand {
   display: flex;
   align-items: baseline;
   gap: 12px;
-  flex-wrap: wrap;
+  /* Single-row brand line; if the camera name + last-snapshot meta would
+   * overflow on a narrow viewport, the right-hand text simply clips
+   * (rather than wrapping below). */
+  flex-wrap: nowrap;
+  flex: 1 1 auto;
   min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+body.cam-page .cam-topbar .brand > * {
+  /* Allow each piece to participate in the ellipsis-when-clipped behaviour. */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 body.cam-page .cam-topbar .brand-name {
-  font-family: var(--cam-font-stack);
+  /* Lexend Tera is one of the wide variants of the Lexend family; reserved
+   * here for the project brand mark. We deliberately do NOT override
+   * letter-spacing — Tera ships with metrics tuned for its width, and
+   * forcing a custom tracking would fight that. Falls back to Inter, then
+   * a system sans-serif, if the font can't load. */
+  font-family: "Lexend Tera", var(--cam-font-stack);
   font-weight: 500;
-  font-size: 28px;
+  /* Lexend Tera is visually wider than Inter at the same nominal size, so
+   * we drop the brand size to keep the header from dominating the page. */
+  font-size: 22px;
   line-height: 1.2;
-  letter-spacing: -0.01em;
   color: var(--brand-dark);
 }
 
@@ -380,6 +404,9 @@ body.cam-page .controls {
   gap: 10px;
   display: flex;
   align-items: center;
+  /* Never shrink or wrap; they always sit at the right edge of the bar. */
+  flex: 0 0 auto;
+  flex-wrap: nowrap;
 }
 
 body.cam-page button {
@@ -421,16 +448,12 @@ body.cam-page #stop-btn:hover:not(:disabled) {
   background: var(--brand-dark-hover);
 }
 
+/* Fullscreen button matches Start visually (orange, white text); we only
+ * tighten the padding because the icon (⛶) is much narrower than "Start". */
 body.cam-page #fullscreen-btn {
-  background: rgba(255, 255, 255, 0.55);
-  color: var(--brand-dark);
   padding: 9px 14px;
-  border: 1px solid rgba(21, 49, 43, 0.15);
-}
-
-body.cam-page #fullscreen-btn:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.85);
-  border-color: rgba(21, 49, 43, 0.25);
+  font-size: 16px;
+  line-height: 1;
 }
 
 /* ----- Video stage ----- */
@@ -476,7 +499,7 @@ body.cam-page #fullscreen-btn:hover:not(:disabled) {
     padding: 12px 16px;
   }
   body.cam-page .cam-topbar .brand-name {
-    font-size: 20px;
+    font-size: 15px;
   }
   body.cam-page #cam-label {
     font-size: 11px;

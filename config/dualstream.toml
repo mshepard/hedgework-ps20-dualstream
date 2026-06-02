@@ -21,7 +21,7 @@ viewer_token = "change-me-viewer"
 # Brand / site label shown on the public per-camera pages and in browser
 # tabs. Empty falls back to "DualStream". Matches the umbrella project
 # brand at https://ps20.hedgework.net/.
-site_name = "Hedgework @ PS 20"
+site_name = "HEDGEWORK @ PS 20"
 
 [camera0]
 resolution = [1280, 720]

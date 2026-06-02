@@ -3,24 +3,24 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Hedgework @ PS 20 · Camera</title>
-    <!-- Inter is the brand typeface used on https://ps20.hedgework.net/.
-         If the browser can't reach fonts.googleapis.com the CSS falls
-         back to a system sans-serif so the page still renders cleanly
-         (e.g. if Tailscale is the only network and the host has no
-         internet egress). -->
+    <title>HEDGEWORK @ PS 20 · Camera</title>
+    <!-- Inter is the brand typeface used on https://ps20.hedgework.net/
+         for body / UI text; Lexend Tera is reserved for the HEDGEWORK @ PS 20
+         brand mark in the header. If the browser can't reach
+         fonts.googleapis.com (e.g. an air-gapped tailnet), the CSS falls
+         back to Inter, then a system sans-serif, so the page still renders. -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
       rel="stylesheet"
-      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Lexend+Tera:wght@400;500;700&display=swap"
     />
     <link rel="stylesheet" href="/static/style.css" />
   </head>
   <body class="cam-page">
     <header class="cam-topbar">
       <div class="brand">
-        <span id="brand-name" class="brand-name">Hedgework @ PS 20</span>
+        <span id="brand-name" class="brand-name">HEDGEWORK @ PS 20</span>
         <span class="brand-sep">·</span>
         <span id="cam-label">Camera ?</span>
         <span id="snapshot-meta" class="snapshot-meta"></span>
