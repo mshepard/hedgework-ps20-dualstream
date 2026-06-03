@@ -363,6 +363,14 @@ class DualStreamServer:
             return web.json_response(
                 {"error": f"unknown camera: {camera}"}, status=400
             )
+        # Every poll of this endpoint is treated as a "viewer is active"
+        # signal so the snapshot worker shortens its cadence to
+        # snapshots.active_interval_seconds while the page is open. This
+        # is what turns the cam page into a 1–2 s refresh slideshow over
+        # any transport that doesn't tolerate WebRTC UDP (e.g. LTE with
+        # carrier-imposed UDP session timeouts, or Tailscale Funnel).
+        self.snapshots.note_viewer_activity()
+
         items = self.snapshots.list_snapshots(camera_num=camera, limit=1)
         if not items:
             return web.json_response(

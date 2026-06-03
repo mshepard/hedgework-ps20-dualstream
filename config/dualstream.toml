@@ -42,7 +42,17 @@ name = ""
 
 [snapshots]
 enabled = true
+# Idle capture cadence: used when no public viewer is polling the cam
+# page. Keep this long — these snapshots also drive the on-disk
+# retention pipeline.
 interval_seconds = 300
+# Active capture cadence: used while a public viewer has the cam page
+# open and is polling /api/public/snapshots/latest. This is what makes
+# the per-camera page feel "live-ish" over LTE / Funnel where WebRTC
+# media doesn't survive. Each poll bumps the worker to this rate; it
+# falls back to interval_seconds after active_window_seconds of no polls.
+active_interval_seconds = 1.5
+active_window_seconds   = 15.0
 retention_days = 7
 path = "/var/lib/dualstream/snapshots"
 # JPEG quality 1-95. Higher = bigger file. 75 is a reasonable balance.

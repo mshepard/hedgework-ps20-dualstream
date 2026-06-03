@@ -1,12 +1,30 @@
 "use strict";
 
-// DualStream public per-camera viewer.
+// DualStream public per-camera viewer — snapshot streaming.
 //
-// Detects which camera to show from the URL path (/cam0 or /cam1) and
-// negotiates a one-track WebRTC session against /api/public/offer. The
-// viewer access key is read from "?key=<token>" once on page load; the
-// page does not store it in localStorage (the shareable URL is the
-// canonical form) but does keep it in memory across Start/Stop cycles.
+// This page intentionally does NOT use WebRTC. WebRTC media is UDP, and
+// the typical deployment for this project (Raspberry Pi on solar power
+// behind an industrial LTE SIM, optionally reached via Tailscale
+// Funnel) has at least one network hop that won't carry sustained UDP
+// reliably. Instead we poll the existing /api/public/snapshots/latest
+// endpoint and swap the <img> on each fresh frame. That goes entirely
+// over HTTPS/TCP, so the page works over the tailnet, over Funnel, and
+// over any plain reverse proxy.
+//
+// Two cadences:
+//   * Idle  — page open but Start hasn't been clicked. Polls every
+//     IDLE_POLL_MS (matches the cam page's old poster-refresh rate).
+//     The image is whatever the snapshot worker last persisted, so it
+//     reflects the configured snapshots.interval_seconds (default
+//     5 minutes).
+//   * Active — Start clicked. Polls every ACTIVE_POLL_MS. Each poll is
+//     treated by the server as a "viewer is active" signal, so the
+//     snapshot worker on the Pi shortens its capture cadence to
+//     snapshots.active_interval_seconds for as long as polls keep
+//     arriving. Together that produces a ~1–2 s slideshow.
+//
+// Live WebRTC is still available on the admin dual-tile UI (at "/"),
+// which is reachable on the tailnet where WebRTC works cleanly.
 
 const els = {
   start: document.getElementById("start-btn"),
@@ -15,29 +33,37 @@ const els = {
   brand: document.getElementById("brand-name"),
   label: document.getElementById("cam-label"),
   snapshotMeta: document.getElementById("snapshot-meta"),
-  video: document.getElementById("video"),
+  frame: document.getElementById("frame"),
   stage: document.getElementById("cam-stage"),
   overlay: document.getElementById("overlay"),
   overlayMsg: document.getElementById("overlay-message"),
+  liveIndicator: document.getElementById("live-indicator"),
 };
 
 const state = {
   cameraNum: null,
   key: null,
-  pc: null,
   siteName: "HEDGEWORK @ PS 20",
   cameraName: null,
-  // Holds {url, timestamp, filename} of the most recent snapshot we've
-  // fetched. Used to drive the <video> poster so the page shows a still
-  // image when the live stream isn't running.
-  lastSnapshot: null,
-  snapshotTimer: null,
+  // Most recent snapshot URL we've shown. We compare on each poll so we
+  // can skip swapping <img>.src when the file hasn't changed (avoids
+  // an unnecessary network round-trip and a brief decode flash).
+  lastUrl: null,
+  // Wall-clock timestamp of the most recent fresh snapshot, used to
+  // render the "last snapshot HH:MM:SS" label.
+  lastTimestamp: null,
+  // Polling state.
+  active: false,
+  pollTimer: null,
+  // True if we've successfully rendered at least one frame; controls
+  // whether the overlay sits on top or is hidden.
+  haveImage: false,
 };
 
-// Poll interval for the latest-snapshot endpoint. 30 s comfortably exceeds
-// the typical snapshot cadence (default 300 s) so we'll always be fresh
-// without hammering the server.
-const SNAPSHOT_POLL_MS = 30_000;
+// Polling cadences. Keep these in sync with snapshots.active_interval_seconds
+// and the historical 30-s poll cadence of the old cam page.
+const ACTIVE_POLL_MS = 1500;
+const IDLE_POLL_MS = 30_000;
 
 function parseCameraNum() {
   const m = location.pathname.match(/\/cam(\d+)/);
@@ -60,99 +86,9 @@ function hideOverlay() {
   els.overlay.classList.add("hidden");
 }
 
-async function startStreaming() {
-  if (state.pc) return;
-  if (state.cameraNum == null) {
-    showOverlay("Unknown camera in URL.", "error");
-    return;
-  }
-  if (!state.key) {
-    showOverlay("Access key required. Open the shareable URL.", "error");
-    return;
-  }
-  els.start.disabled = true;
-  showOverlay("Connecting…", "info");
-
-  const pc = new RTCPeerConnection({ iceServers: [] });
-  state.pc = pc;
-  els.video.srcObject = null;
-
-  pc.addEventListener("track", (event) => {
-    // Wrap in a fresh MediaStream for the same reason as the dual-tile
-    // UI: aiortc reuses one msid across all tracks on a PC.
-    els.video.srcObject = new MediaStream([event.track]);
-  });
-
-  pc.addEventListener("iceconnectionstatechange", () => {
-    if (["failed", "disconnected", "closed"].includes(pc.iceConnectionState)) {
-      showOverlay(`Disconnected (${pc.iceConnectionState}).`, "warn");
-      teardown();
-    }
-  });
-  pc.addEventListener("connectionstatechange", () => {
-    if (pc.connectionState === "connected") {
-      hideOverlay();
-    } else if (["failed", "closed"].includes(pc.connectionState)) {
-      showOverlay(`Connection ${pc.connectionState}.`, "warn");
-      teardown();
-    }
-  });
-
-  pc.addTransceiver("video", { direction: "recvonly" });
-
-  try {
-    const offer = await pc.createOffer();
-    await pc.setLocalDescription(offer);
-    await iceGatheringComplete(pc);
-
-    const resp = await fetch(`/api/public/offer?key=${encodeURIComponent(state.key)}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        sdp: pc.localDescription.sdp,
-        type: pc.localDescription.type,
-        camera: state.cameraNum,
-      }),
-    });
-    if (!resp.ok) {
-      const text = await resp.text();
-      throw new Error(`HTTP ${resp.status}: ${text}`);
-    }
-    const answer = await resp.json();
-    await pc.setRemoteDescription({ type: answer.type, sdp: answer.sdp });
-    els.stop.disabled = false;
-  } catch (err) {
-    showOverlay(`Failed to start: ${err.message}`, "error");
-    teardown();
-  }
-}
-
-function iceGatheringComplete(pc) {
-  if (pc.iceGatheringState === "complete") return Promise.resolve();
-  return new Promise((resolve) => {
-    const check = () => {
-      if (pc.iceGatheringState === "complete") {
-        pc.removeEventListener("icegatheringstatechange", check);
-        resolve();
-      }
-    };
-    pc.addEventListener("icegatheringstatechange", check);
-    setTimeout(() => resolve(), 2000);
-  });
-}
-
-function teardown() {
-  if (state.pc) {
-    try { state.pc.close(); } catch (_) { /* noop */ }
-    state.pc = null;
-  }
-  els.video.srcObject = null;
-  // Re-evaluate the poster so the still image reappears after a session.
-  // Some browsers don't auto-show the poster after a video element has
-  // played media and had its srcObject cleared; load() forces it.
-  try { els.video.load(); } catch (_) { /* noop */ }
-  els.start.disabled = false;
-  els.stop.disabled = true;
+function setLiveIndicator(active) {
+  if (!els.liveIndicator) return;
+  els.liveIndicator.classList.toggle("hidden", !active);
 }
 
 async function fetchBranding() {
@@ -186,39 +122,83 @@ function applyBranding() {
   document.title = `${state.siteName} · ${state.cameraName}`;
 }
 
-async function refreshLatestSnapshot() {
+async function pollOnce() {
   if (!state.key || state.cameraNum == null) return;
   try {
     const url =
       `/api/public/snapshots/latest` +
       `?camera=${state.cameraNum}&key=${encodeURIComponent(state.key)}`;
     const resp = await fetch(url, { cache: "no-store" });
-    if (!resp.ok) return;
-    const data = await resp.json();
-    state.lastSnapshot = data;
-    applySnapshotPoster();
-    if (data.url && data.timestamp) {
-      const date = new Date(data.timestamp * 1000);
-      els.snapshotMeta.textContent = `· last snapshot ${formatTime(date)}`;
-      els.snapshotMeta.title = date.toLocaleString();
-    } else {
-      els.snapshotMeta.textContent = "· no snapshots yet";
-      els.snapshotMeta.title = "";
+    if (!resp.ok) {
+      // 401 / 503 here would be auth or "public endpoints disabled" —
+      // surface those rather than silently retrying.
+      if (resp.status === 401) {
+        showOverlay("Access key rejected. Check the URL.", "error");
+        stopPolling();
+        return;
+      }
+      if (resp.status === 503) {
+        showOverlay(
+          "Public viewing is disabled (viewer_token not set on server).",
+          "warn",
+        );
+        stopPolling();
+        return;
+      }
+      // Transient errors: leave the previous frame on screen and try
+      // again next tick. Don't spam the overlay.
+      return;
     }
+    const data = await resp.json();
+    if (!data.url) {
+      // Service is up, but no snapshots exist yet (fresh install, or
+      // the worker hasn't completed its first tick).
+      showOverlay("Waiting for first snapshot…", "info");
+      return;
+    }
+    applyFrame(data);
   } catch (_) {
-    // Best-effort. Failing snapshot poll shouldn't disturb the page.
+    // Network blip; previous frame stays.
   }
 }
 
-function applySnapshotPoster() {
-  if (state.lastSnapshot && state.lastSnapshot.url) {
-    // Snapshot URLs include a timestamped path, so the URL itself changes
-    // when a new snapshot arrives; no cache-busting needed.
-    if (els.video.poster !== state.lastSnapshot.url) {
-      els.video.poster = state.lastSnapshot.url;
-    }
+function applyFrame(data) {
+  // Update header timestamp first so the user sees freshness even on the
+  // very first frame (before the <img> decodes).
+  state.lastTimestamp = data.timestamp;
+  updateSnapshotMeta();
+
+  if (data.url === state.lastUrl) {
+    // Same file as the previous poll — worker hasn't produced a new
+    // frame yet. Nothing to do.
+    return;
+  }
+  state.lastUrl = data.url;
+
+  const img = els.frame;
+  // onload runs once the new frame is decoded — that's when we want to
+  // hide the "Loading…" / "Waiting…" overlay so the user never sees a
+  // blank stage flash between frames.
+  img.onload = () => {
+    state.haveImage = true;
+    hideOverlay();
+  };
+  img.onerror = () => {
+    // 401 on the JPEG itself (e.g. token rotated mid-session). Force
+    // the user back to the shareable URL flow.
+    showOverlay("Snapshot failed to load. Reload the URL.", "warn");
+  };
+  img.src = data.url;
+}
+
+function updateSnapshotMeta() {
+  if (state.lastTimestamp != null) {
+    const date = new Date(state.lastTimestamp * 1000);
+    els.snapshotMeta.textContent = `· last snapshot ${formatTime(date)}`;
+    els.snapshotMeta.title = date.toLocaleString();
   } else {
-    els.video.removeAttribute("poster");
+    els.snapshotMeta.textContent = "";
+    els.snapshotMeta.title = "";
   }
 }
 
@@ -230,9 +210,52 @@ function formatTime(date) {
   });
 }
 
-function stop() {
-  showOverlay("Stopped. Press Start to resume.", "info");
-  teardown();
+function startPolling() {
+  if (state.active) return;
+  state.active = true;
+  els.start.disabled = true;
+  els.stop.disabled = false;
+  setLiveIndicator(true);
+  if (!state.haveImage) {
+    showOverlay("Loading…", "info");
+  } else {
+    hideOverlay();
+  }
+  // Schedule the first poll immediately, then on the active cadence.
+  // Setting state.active first means pollOnce() can safely re-arm via
+  // schedulePoll().
+  pollOnce();
+  schedulePoll();
+}
+
+function stopPolling() {
+  state.active = false;
+  els.start.disabled = false;
+  els.stop.disabled = true;
+  setLiveIndicator(false);
+  if (state.pollTimer != null) {
+    clearTimeout(state.pollTimer);
+    state.pollTimer = null;
+  }
+  // Drop back to the slow idle cadence so the visible frame still
+  // gradually refreshes for visitors who walked away from Start but
+  // left the tab open. schedulePoll() keys off state.active so it
+  // picks the longer delay automatically.
+  schedulePoll();
+}
+
+function schedulePoll() {
+  // Single timer; always reschedules itself so the page also keeps
+  // refreshing on the slow idle cadence between Start clicks. The
+  // delay is recomputed each round, so Start/Stop transitions take
+  // effect on the next tick.
+  if (state.pollTimer != null) clearTimeout(state.pollTimer);
+  const delay = state.active ? ACTIVE_POLL_MS : IDLE_POLL_MS;
+  state.pollTimer = setTimeout(async () => {
+    state.pollTimer = null;
+    await pollOnce();
+    schedulePoll();
+  }, delay);
 }
 
 function toggleFullscreen() {
@@ -255,7 +278,7 @@ function init() {
     return;
   }
   // Apply provisional branding immediately so the page doesn't flash
-  // "DualStream · Camera ?" before the /api/public/info fetch lands.
+  // the default text before /api/public/info lands.
   applyBranding();
 
   if (!state.key) {
@@ -267,27 +290,24 @@ function init() {
     return;
   }
 
-  showOverlay("Press Start to begin streaming.", "info");
-  els.start.addEventListener("click", startStreaming);
-  els.stop.addEventListener("click", stop);
+  showOverlay("Loading latest snapshot…", "info");
+  els.start.addEventListener("click", startPolling);
+  els.stop.addEventListener("click", stopPolling);
   els.fullscreen.addEventListener("click", toggleFullscreen);
 
-  // Fetch the site / camera display names (best effort).
+  // Fetch the site / camera display names (best effort) and kick off
+  // an idle-cadence poll so visitors see a recent still even before
+  // clicking Start. Clicking Start later upshifts to ACTIVE_POLL_MS.
   fetchBranding();
-
-  // Latest-snapshot polling: kicks in immediately so the visitor sees a
-  // current still image before they (optionally) click Start. Continues
-  // while streaming so the poster is up-to-date the next time they Stop.
-  refreshLatestSnapshot();
-  state.snapshotTimer = setInterval(refreshLatestSnapshot, SNAPSHOT_POLL_MS);
+  pollOnce();
+  schedulePoll();
 }
 
 function cleanup() {
-  if (state.snapshotTimer != null) {
-    clearInterval(state.snapshotTimer);
-    state.snapshotTimer = null;
+  if (state.pollTimer != null) {
+    clearTimeout(state.pollTimer);
+    state.pollTimer = null;
   }
-  teardown();
 }
 
 window.addEventListener("DOMContentLoaded", init);

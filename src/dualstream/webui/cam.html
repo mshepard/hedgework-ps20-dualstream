@@ -28,6 +28,10 @@
         <span id="snapshot-meta" class="snapshot-meta"></span>
       </div>
       <div class="controls">
+        <!-- Start kicks the snapshot worker into fast cadence (~1.5 s) and
+             starts polling for fresh frames; Stop returns to the slow
+             idle cadence (every few minutes) so the page still shows
+             *something* current but doesn't keep the Pi capturing. -->
         <button id="start-btn" type="button">Start</button>
         <button id="stop-btn" type="button" disabled>Stop</button>
         <button id="fullscreen-btn" type="button" title="Toggle fullscreen" aria-label="Toggle fullscreen">⛶</button>
@@ -36,7 +40,22 @@
 
     <main class="cam-main">
       <div class="cam-stage" id="cam-stage">
-        <video id="video" autoplay playsinline muted></video>
+        <!-- Snapshot streaming: cam.js swaps this <img>'s src on each
+             poll. We deliberately use <img> rather than <video> + poster
+             so we can swap frames cheaply (the browser caches and
+             diff-renders) and so the same UX works through any HTTPS
+             transport — Tailscale Funnel, an LTE carrier that blocks
+             sustained UDP, etc. -->
+        <img
+          id="frame"
+          alt="Latest camera frame"
+          decoding="async"
+          referrerpolicy="no-referrer"
+        />
+        <div id="live-indicator" class="cam-live-indicator hidden" aria-hidden="true">
+          <span class="cam-live-dot"></span>
+          <span>LIVE</span>
+        </div>
         <div id="overlay" class="cam-overlay">
           <div class="cam-overlay-inner" id="overlay-message">Loading…</div>
         </div>

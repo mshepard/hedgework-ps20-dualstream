@@ -4,8 +4,19 @@ On each tick, briefly acquires each camera, captures a frame, and writes a
 JPEG to ``{path}/camera{N}/{YYYYMMDD}/{HHMMSS}.jpg``. A retention pass
 prunes files older than ``retention_days``.
 
-Phase 1: fixed interval. Phase 2 will multiply this interval by the active
-power-mode's snapshot-interval-factor.
+The worker has two cadences:
+
+  * ``interval_seconds`` (idle) — used when no public viewer is polling.
+    Typically minutes; keeps storage / power impact low.
+  * ``active_interval_seconds`` (active) — used while a public viewer is
+    actively polling ``/api/public/snapshots/latest``. Typically 1–2 s;
+    drives the snapshot-streaming UX on the cam page. Activity is
+    reported by the server via :meth:`note_viewer_activity`, which both
+    records the last-activity timestamp and wakes the worker if it's
+    currently sleeping through a long idle interval.
+
+Phase 2 will multiply both intervals by the active power-mode's
+snapshot-interval-factor.
 """
 
 from __future__ import annotations
@@ -13,6 +24,7 @@ from __future__ import annotations
 import asyncio
 import io
 import logging
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -34,10 +46,42 @@ class SnapshotWorker:
         self._config = config
         self._task: asyncio.Task[None] | None = None
         self._stop_event = asyncio.Event()
+        # Viewer-activity bookkeeping. _last_activity is a monotonic
+        # timestamp set by note_viewer_activity(); the worker uses it to
+        # decide between idle and active cadence on each tick. The event
+        # is set on every activity ping so a worker currently asleep in a
+        # long idle interval wakes up promptly and starts producing
+        # frames at the fast cadence.
+        self._last_activity: float = 0.0
+        self._activity_event = asyncio.Event()
 
     @property
     def base_path(self) -> Path:
         return self._config.path
+
+    def note_viewer_activity(self) -> None:
+        """Record a public-viewer poll and wake the worker if idling.
+
+        Called from the aiohttp handler that serves the latest-snapshot
+        endpoint. Cheap and safe to call on every request; only the
+        timestamp + event update happens, no I/O. Setting the event is
+        idempotent — extra calls while it's already set are no-ops."""
+        self._last_activity = time.monotonic()
+        self._activity_event.set()
+
+    def _viewer_is_active(self) -> bool:
+        if self._last_activity == 0.0:
+            return False
+        return (
+            time.monotonic() - self._last_activity
+            < self._config.active_window_seconds
+        )
+
+    def _next_interval(self) -> float:
+        """Seconds to sleep before the next tick, based on activity."""
+        if self._viewer_is_active():
+            return float(self._config.active_interval_seconds)
+        return float(self._config.interval_seconds)
 
     def start(self) -> None:
         if not self._config.enabled:
@@ -46,10 +90,14 @@ class SnapshotWorker:
         if self._task is not None:
             return
         self._stop_event.clear()
+        self._activity_event.clear()
         self._task = asyncio.create_task(self._run())
         logger.info(
-            "Snapshot worker started: interval=%ds, path=%s",
+            "Snapshot worker started: idle=%ds, active=%.2fs, "
+            "active_window=%.0fs, path=%s",
             self._config.interval_seconds,
+            self._config.active_interval_seconds,
+            self._config.active_window_seconds,
             self.base_path,
         )
 
@@ -65,17 +113,16 @@ class SnapshotWorker:
         self._task = None
 
     async def _run(self) -> None:
-        # Take one snapshot promptly on startup, then loop at the interval.
+        # Take one snapshot promptly on startup, then loop. Each iteration
+        # sleeps for either the idle or the active interval and can be
+        # interrupted by either the stop signal (clean shutdown) or a
+        # viewer-activity ping (so we don't make someone wait minutes for
+        # the next idle-cadence tick to fire after they open the page).
         try:
             await self._tick()
             while not self._stop_event.is_set():
-                try:
-                    await asyncio.wait_for(
-                        self._stop_event.wait(),
-                        timeout=self._config.interval_seconds,
-                    )
-                except asyncio.TimeoutError:
-                    pass
+                self._activity_event.clear()
+                await self._sleep_until_next_tick()
                 if self._stop_event.is_set():
                     break
                 await self._tick()
@@ -84,6 +131,27 @@ class SnapshotWorker:
         except Exception:
             logger.exception("Snapshot worker crashed")
             raise
+
+    async def _sleep_until_next_tick(self) -> None:
+        """Sleep for the current interval, but wake early on stop or activity."""
+        stop_task = asyncio.create_task(self._stop_event.wait())
+        wake_task = asyncio.create_task(self._activity_event.wait())
+        try:
+            await asyncio.wait(
+                {stop_task, wake_task},
+                timeout=self._next_interval(),
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+        finally:
+            # Cancel + await any tasks that didn't complete so asyncio
+            # doesn't warn about destroyed pending tasks at shutdown.
+            for task in (stop_task, wake_task):
+                if not task.done():
+                    task.cancel()
+                    try:
+                        await task
+                    except asyncio.CancelledError:
+                        pass
 
     async def _tick(self) -> None:
         timestamp = datetime.now()

@@ -1,6 +1,11 @@
 # DualStream
 
-Dual Pi Camera 3 WebRTC streamer for Raspberry Pi 5, designed for solar-powered, LTE-connected remote monitoring deployments.
+Dual Pi Camera 3 streamer for Raspberry Pi 5, designed for solar-powered, LTE-connected remote monitoring deployments.
+
+Two delivery modes coexist in the same service:
+
+- **Live WebRTC** on the admin dual-tile page, optimised for low latency on a local network or a tailnet (clean UDP path).
+- **Snapshot streaming** on the public per-camera pages — a ~1.5 s polled HTTP slideshow. This is the path that works reliably across LTE carriers (which routinely time out long-lived UDP flows) and through Tailscale Funnel (HTTPS only), at the cost of fluency.
 
 This repository is split into two phases:
 
@@ -14,11 +19,11 @@ See `.cursor/plans/dualstream_pi5_webrtc_*.plan.md` for the full design plan.
 ## Phase 1: what you get
 
 - Two `picamera2`-backed video streams (default 1280x720 @ 15 fps, software H.264 via libx264 inside aiortc).
-- WebRTC delivery to a browser, no STUN/TURN required when connecting over Tailscale.
-- Periodic JPEG snapshots written to `/var/lib/dualstream/snapshots/cameraN/YYYYMMDD/HHMMSS.jpg` with a configurable retention window.
+- WebRTC delivery to a browser on the admin page, no STUN/TURN required when connecting over Tailscale.
+- Periodic JPEG snapshots written to `/var/lib/dualstream/snapshots/cameraN/YYYYMMDD/HHMMSS.jpg` with a configurable retention window. The snapshot worker has a dual cadence: a long idle interval (default 5 min) when no viewer is watching, and a short active interval (default 1.5 s) while a public viewer is polling.
 - Two web surfaces:
-  - **Admin dual-tile UI at `/`** — side-by-side feeds, manual snapshot trigger, recent-snapshot strip, and a live log. Admin bearer token required.
-  - **Public per-camera viewers at `/cam0` and `/cam1`** — single-feed kiosk-style page with Start/Stop/Fullscreen and nothing else. Access is gated by a separate `viewer_token` that travels as `?key=…` in the URL, so the URL itself is shareable.
+  - **Admin dual-tile UI at `/`** — live WebRTC, side-by-side feeds, manual snapshot trigger, recent-snapshot strip, and a live log. Admin bearer token required. Use this on the tailnet or LAN where UDP works.
+  - **Public per-camera viewers at `/cam0` and `/cam1`** — snapshot-streaming kiosk page with Start/Stop/Fullscreen. On Start, the page polls the snapshot endpoint at the configured active cadence, which both refreshes the visible `<img>` and signals the snapshot worker on the Pi to capture frames at the same rate. This delivers a ~1.5 s slideshow over plain HTTPS, so it works through Tailscale Funnel, behind LTE carriers that throttle long-lived UDP, and across any vanilla reverse proxy. Access is gated by a separate `viewer_token` that travels as `?key=…` in the URL, so the URL itself is shareable.
 - Auto-generated random tokens on first install (admin + viewer) printed by the installer; config file is `0640 root:dualstream` so other local users can't read the tokens.
 - Static UI and snapshot images are unauthenticated so they can be embedded.
 - systemd service that runs as a dedicated `dualstream` user.
@@ -110,6 +115,17 @@ name = "North View"
 name = "South View"
 ```
 
+The snapshot worker drives the public cam page. Its two cadences are configurable:
+
+```toml
+[snapshots]
+interval_seconds        = 300    # idle: nobody watching, used for retention
+active_interval_seconds = 1.5    # active: a viewer is polling; this is the "slideshow" rate
+active_window_seconds   = 15.0   # how long after the last poll the worker stays in active mode
+```
+
+Lower `active_interval_seconds` for a smoother slideshow at the cost of more Pi CPU and more outbound bandwidth (every poll is a fresh ~80 KB JPEG). Raise `active_window_seconds` if you see the slideshow stalling for a few seconds when a poll is delayed by the network.
+
 Both the public per-camera pages and the admin dual-tile UI carry the umbrella **Hedgework @ PS 20** brand at [ps20.hedgework.net](https://ps20.hedgework.net/): Inter typeface for body, Lexend Tera for the brand mark, dusty pink header, dark forest text, orange accent buttons, off-white background, sky blue borders. The hedgework illustration (by Johanna Kindvall) is anchored bottom-centre of the viewport as a fixed background. Drop a different PNG into `src/dualstream/webui/media/` and update the `--cam-bg-image` custom property (in `style.css`) on either `.cam-page` or `.admin-page` to swap the artwork. The full palette lives in CSS variables at the top of each `body.<page>-page` block — change one variable to retune.
 
 The admin page keeps a dark forest log panel (instead of the cream body background) because logs are a debug surface where monospace-on-dark reads best.
@@ -144,7 +160,14 @@ http://<pi-tailnet-name>:8080/cam1?key=<viewer_token>
 ```
 Each is a single-camera page with Start, Stop, and Fullscreen — no log, no token field. The URL is the access credential, so treat it like a password.
 
-While the live stream is not running, the page displays the most recent snapshot as a still preview (auto-refreshed every 30 s) so visitors immediately see what's on camera without needing to start a WebRTC session. The header shows "last snapshot HH:MM:SS" to confirm freshness.
+These pages **do not** use WebRTC. They drive a snapshot-polling pipeline instead:
+
+- On page load, the latest persisted snapshot loads into the `<img>` immediately. The header shows "last snapshot HH:MM:SS" to confirm freshness.
+- The page keeps polling at a slow idle cadence (30 s) even when stopped, so the still preview gradually refreshes for visitors who walked away.
+- Clicking **Start** upshifts the poller to the active cadence (`ACTIVE_POLL_MS` in `cam.js`, default 1.5 s). A small pulsing **LIVE** pill appears in the top-right of the stage. Each poll counts as a "viewer is active" signal on the server, which makes the snapshot worker capture at `snapshots.active_interval_seconds`. The net effect is a ~1.5 s slideshow.
+- Clicking **Stop** drops back to the slow idle cadence; the worker times out of "active" mode `snapshots.active_window_seconds` later and returns to its long idle interval, ending the Pi's elevated capture rate.
+
+This is the right path for any transport that doesn't carry sustained UDP cleanly (LTE carriers, Funnel, restricted firewalls). Use the admin page for true low-latency live viewing on the tailnet.
 
 ### Exposing the public pages over the internet (Tailscale Funnel)
 
@@ -234,6 +257,8 @@ DualStream/
 - **WebRTC connects but no video**: check `journalctl -u dualstream -f` for capture errors; verify the camera works standalone with `rpicam-hello`.
 - **High CPU**: lower `framerate` or `resolution` in the per-camera config. Phase 2's `REDUCED` mode will do this automatically based on battery state.
 - **401 from API**: paste the admin `auth_token` (from `/etc/dualstream/dualstream.toml`) into the dual-tile UI's token field, or set `Authorization: Bearer ...` on your `curl` calls.
-- **`/cam0` says "Access key required"**: open the URL with `?key=<viewer_token>` appended (the admin UI's per-tile "↗ single view" link does this automatically once you're authenticated). If `viewer_token` is empty in the config, the public endpoints are disabled by design and the page will refuse to negotiate.
+- **`/cam0` says "Access key required"**: open the URL with `?key=<viewer_token>` appended (the admin UI's per-tile "↗ single view" link does this automatically once you're authenticated). If `viewer_token` is empty in the config, the public endpoints are disabled by design and the page won't load any frames.
+- **Cam page slideshow runs slowly**: while the page is on the active poll cadence, the snapshot worker captures one frame per tick *per camera*. If both cam pages are open and the configured `[camera*]` resolution / bitrate is heavy, the Pi can't keep up. Either lower the resolution, raise `[snapshots].active_interval_seconds`, or close one of the tabs.
+- **Cam page shows the same frame indefinitely**: confirm the snapshot worker is enabled (`snapshots.enabled = true`) and that the most recent `journalctl -u dualstream` doesn't show repeated `Snapshot failed` lines. Also check the `<img>` URL in browser devtools — every poll should rotate the filename component.
 - **Snapshot JPEG URL returns 401**: `/snapshots/*` is no longer anonymous — the APIs (`/api/snapshots`, `/api/public/snapshots/latest`, `/api/snapshot`) emit URLs already keyed with `?key=…`. If you copied a snapshot URL from before the gating was added, refresh the snapshot strip / latest-snapshot poll so the page picks up new URLs.
 - **Forgot your tokens**: `sudo cat /etc/dualstream/dualstream.toml` shows both. To rotate, edit the file (set either value back to the placeholder `"change-me"` / `"change-me-viewer"` then re-run `sudo bash scripts/install.sh`, or just paste in your own new random string) and `sudo systemctl restart dualstream`.

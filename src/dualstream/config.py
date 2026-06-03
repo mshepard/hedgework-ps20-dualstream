@@ -69,7 +69,23 @@ class CameraConfig(BaseModel):
 
 class SnapshotsConfig(BaseModel):
     enabled: bool = True
+    # Capture cadence when no public viewer has polled recently. Keep this
+    # long for storage / power efficiency — the snapshot worker is also
+    # the on-disk retention pipeline.
     interval_seconds: int = Field(default=300, ge=10)
+    # Capture cadence while a public viewer is actively polling the page.
+    # The cam page uses snapshot streaming for its main UX, so this needs
+    # to be fast enough to feel "live-ish" (~1-2 s) without melting the
+    # Pi. The worker shortens its sleep to this value whenever the most
+    # recent /api/public/snapshots/latest poll is inside the active
+    # window below.
+    active_interval_seconds: float = Field(default=1.5, ge=0.25, le=60.0)
+    # After the most recent viewer poll, the worker stays at the fast
+    # cadence for this many seconds before falling back to
+    # interval_seconds. The cam page polls every active_interval_seconds,
+    # so this only needs to be ≥ ~3 × that to ride out a missed poll or
+    # brief network blip.
+    active_window_seconds: float = Field(default=15.0, ge=1.0, le=600.0)
     retention_days: int = Field(default=7, ge=1)
     path: Path = Path("/var/lib/dualstream/snapshots")
     jpeg_quality: int = Field(default=75, ge=1, le=95)
