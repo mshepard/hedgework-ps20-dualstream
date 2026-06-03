@@ -20,6 +20,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any
 
@@ -64,6 +65,16 @@ class Camera:
         # ``acquire()``, which tears the abandoned picamera2 instance
         # down and starts a fresh one.
         self._broken: bool = False
+        # Dedicated single-thread executor for blocking picamera2 calls
+        # (start / stop / capture / recover). Keeping these off the
+        # default asyncio thread pool means a wedged ``capture_array``
+        # can only leak this camera's executor thread — HTTP handlers,
+        # JPEG encoding, and the other camera all continue to run on
+        # the default pool unaffected. Replaced wholesale by
+        # ``mark_broken()`` so the next recovery attempt has a thread
+        # available even though the prior one is permanently stuck
+        # inside libcamera.
+        self._picam2_executor: ThreadPoolExecutor = self._make_picam2_executor()
 
     @property
     def running(self) -> bool:
@@ -73,6 +84,12 @@ class Camera:
     def refcount(self) -> int:
         return self._refcount
 
+    def _make_picam2_executor(self) -> ThreadPoolExecutor:
+        return ThreadPoolExecutor(
+            max_workers=1,
+            thread_name_prefix=f"cam{self.camera_num}-picam2",
+        )
+
     def mark_broken(self) -> None:
         """Signal that this camera's capture pipeline is wedged.
 
@@ -80,10 +97,20 @@ class Camera:
         instance (its leaked executor thread, blocked inside
         ``capture_array``, may still hold the old ``_device_lock``),
         rebind ``_device_lock``, best-effort close the old instance on
-        a daemon thread, and start a fresh one. Callers can keep
-        invoking this idempotently; only the next ``acquire()`` acts on
-        it."""
+        a daemon thread, and start a fresh one. We also swap the
+        per-camera executor here: the current worker thread is still
+        stuck inside picamera2 and any subsequent recovery / capture
+        call queued on it would never run. A fresh ``ThreadPoolExecutor``
+        gives the next operation somewhere to actually execute; the
+        previous one is told to shut down without waiting and without
+        accepting new work (the leaked thread keeps running, harmlessly,
+        until libcamera finally unblocks). Idempotent — repeated calls
+        leak additional executors and threads, so callers should only
+        invoke it once per detected wedge, but it remains safe."""
         self._broken = True
+        old_exec = self._picam2_executor
+        self._picam2_executor = self._make_picam2_executor()
+        old_exec.shutdown(wait=False, cancel_futures=True)
 
     async def acquire(self) -> None:
         async with self._refcount_lock:
@@ -98,11 +125,15 @@ class Camera:
                         self.camera_num,
                     )
                     loop = asyncio.get_running_loop()
-                    await loop.run_in_executor(None, self._recover_blocking)
+                    await loop.run_in_executor(
+                        self._picam2_executor, self._recover_blocking
+                    )
                     self._broken = False
                 elif self._picam2 is None:
                     loop = asyncio.get_running_loop()
-                    await loop.run_in_executor(None, self._start_blocking)
+                    await loop.run_in_executor(
+                        self._picam2_executor, self._start_blocking
+                    )
             except Exception:
                 # Don't leak a refcount if start/recover failed; the
                 # next acquire will retry from a clean slate.
@@ -124,7 +155,9 @@ class Camera:
         async with self._refcount_lock:
             if self._refcount == 0 and self._picam2 is not None:
                 loop = asyncio.get_running_loop()
-                await loop.run_in_executor(None, self._stop_blocking)
+                await loop.run_in_executor(
+                    self._picam2_executor, self._stop_blocking
+                )
 
     def _start_blocking(self) -> None:
         from picamera2 import Picamera2  # noqa: PLC0415  (deferred import)
@@ -216,7 +249,9 @@ class Camera:
         if self._picam2 is None:
             raise RuntimeError(f"Camera {self.camera_num} is not running")
         loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(None, self._capture_blocking)
+        return await loop.run_in_executor(
+            self._picam2_executor, self._capture_blocking
+        )
 
     def _capture_blocking(self) -> np.ndarray:
         with self._device_lock:
@@ -291,6 +326,12 @@ class CameraManager:
                     "Camera %d stop hung during shutdown; abandoning",
                     cam.camera_num,
                 )
+
+        # Best-effort executor cleanup. Won't kill stuck worker threads
+        # — daemon threads die with the process — but tidies up the
+        # queue and marks the pools as shut.
+        for cam in self._cameras.values():
+            cam._picam2_executor.shutdown(wait=False, cancel_futures=True)
 
 
 def _make_camera(num: int, cfg: CameraConfig, idle_grace_seconds: int) -> Camera:
