@@ -24,6 +24,7 @@ from __future__ import annotations
 import asyncio
 import io
 import logging
+import os
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -227,14 +228,24 @@ class SnapshotWorker:
         )
 
     def _encode_and_write(self, camera_num: int, array, timestamp: datetime) -> Path:
+        # Write to a sibling .tmp file and then atomically rename it
+        # into place. Without this, ``list_snapshots`` (called from the
+        # public ``latest`` endpoint roughly every active_interval_seconds)
+        # can pick up the file mid-write — the JPEG exists on disk but
+        # only the header has been flushed — and hand its URL to the
+        # browser, which then fails to decode and fires <img onerror>.
+        # ``os.replace`` is atomic on POSIX, so a concurrent reader
+        # either misses the file entirely or sees the fully-written one.
         directory = self.base_path / f"camera{camera_num}" / timestamp.strftime("%Y%m%d")
         directory.mkdir(parents=True, exist_ok=True)
         filename = timestamp.strftime("%H%M%S") + ".jpg"
-        out_path = directory / filename
+        final_path = directory / filename
+        tmp_path = directory / (filename + ".tmp")
         image = Image.fromarray(array, mode="RGB")
-        image.save(out_path, format="JPEG", quality=self._config.jpeg_quality, optimize=True)
-        logger.debug("Wrote snapshot %s", out_path)
-        return out_path
+        image.save(tmp_path, format="JPEG", quality=self._config.jpeg_quality, optimize=True)
+        os.replace(tmp_path, final_path)
+        logger.debug("Wrote snapshot %s", final_path)
+        return final_path
 
     async def capture_now(self) -> dict[int, Path]:
         """Manual trigger: capture one frame per camera right now."""

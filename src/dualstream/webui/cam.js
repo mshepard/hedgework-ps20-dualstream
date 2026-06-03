@@ -58,7 +58,21 @@ const state = {
   // True if we've successfully rendered at least one frame; controls
   // whether the overlay sits on top or is hidden.
   haveImage: false,
+  // Consecutive <img onerror> count. A single failure is usually
+  // transient (e.g. the snapshot worker happened to be mid-write when
+  // we fetched the URL, before the server-side atomic-rename was in
+  // place) so we don't want to throw a scary warning the moment one
+  // load fails. The pill only appears once we've missed
+  // OVERLAY_ERROR_THRESHOLD frames in a row, and is cleared on the
+  // next successful load.
+  consecutiveErrors: 0,
 };
+
+// Number of consecutive image-decode failures before we surface the
+// "Snapshot failed to load. Reload the URL." overlay. At
+// ACTIVE_POLL_MS = 1500 ms this corresponds to ~4.5 s of solid failure
+// before the user sees anything.
+const OVERLAY_ERROR_THRESHOLD = 3;
 
 // Polling cadences. Keep these in sync with snapshots.active_interval_seconds
 // and the historical 30-s poll cadence of the old cam page.
@@ -181,12 +195,18 @@ function applyFrame(data) {
   // blank stage flash between frames.
   img.onload = () => {
     state.haveImage = true;
+    state.consecutiveErrors = 0;
     hideOverlay();
   };
   img.onerror = () => {
-    // 401 on the JPEG itself (e.g. token rotated mid-session). Force
-    // the user back to the shareable URL flow.
-    showOverlay("Snapshot failed to load. Reload the URL.", "warn");
+    state.consecutiveErrors += 1;
+    if (state.consecutiveErrors >= OVERLAY_ERROR_THRESHOLD) {
+      // Probably a real problem: revoked token, server down, or the
+      // snapshot worker producing corrupt files. Tell the user.
+      showOverlay("Snapshot failed to load. Reload the URL.", "warn");
+    }
+    // Otherwise: stay silent — the previous frame is still showing and
+    // the next poll will almost certainly succeed.
   };
   img.src = data.url;
 }
