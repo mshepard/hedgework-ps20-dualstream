@@ -41,10 +41,12 @@ class SnapshotWorker:
     # blocking ``capture_array`` runs inside an executor thread; if the
     # underlying libcamera pipeline ever stalls (deadlocks against
     # another consumer, buffer pool exhaustion, …) the await would hang
-    # forever and the entire worker loop would freeze on its first
-    # post-wake tick. The cold-start path is usually ≤ 2 s on a Pi 5
-    # with both IMX708s; 10 s leaves a generous safety margin.
-    CAPTURE_TIMEOUT_SECONDS: float = 10.0
+    # forever. When it fires we mark the camera broken so the next
+    # ``acquire()`` rebuilds it from scratch — see
+    # ``Camera.mark_broken()``. Cold start is normally ≤ 2 s on a Pi 5
+    # with both IMX708s; 4 s leaves headroom without burning a whole
+    # tick budget on a wedged pipeline.
+    CAPTURE_TIMEOUT_SECONDS: float = 4.0
 
     def __init__(
         self,
@@ -206,14 +208,20 @@ class SnapshotWorker:
         # Wrap the blocking capture in a wall-clock timeout. ``cam.capture()``
         # itself hands work to a thread pool, so a TimeoutError here only
         # frees the awaiting coroutine — the underlying executor thread
-        # may still be stuck in picamera2 until libcamera unblocks. That
-        # leaks a thread per timeout, but it keeps the snapshot loop
-        # alive, which is more important than the leak (and timeouts
-        # should be rare).
+        # is still stuck in picamera2, holding the camera's device lock.
+        # We mark the camera broken so the next acquire() rebinds the
+        # lock and reopens a fresh Picamera2 instance, breaking the
+        # would-be deadlock. The leaked thread persists until libcamera
+        # finally unblocks (which it may never do), but it no longer
+        # blocks the next tick.
         async with cam.session():
-            array = await asyncio.wait_for(
-                cam.capture(), timeout=self.CAPTURE_TIMEOUT_SECONDS
-            )
+            try:
+                array = await asyncio.wait_for(
+                    cam.capture(), timeout=self.CAPTURE_TIMEOUT_SECONDS
+                )
+            except (asyncio.TimeoutError, TimeoutError):
+                cam.mark_broken()
+                raise
         return await asyncio.get_running_loop().run_in_executor(
             None, self._encode_and_write, cam.camera_num, array, timestamp
         )

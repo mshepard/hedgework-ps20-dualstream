@@ -53,9 +53,17 @@ class Camera:
         self._refcount: int = 0
         self._refcount_lock = asyncio.Lock()
         # Serialise capture calls; picamera2 is not documented as fully
-        # thread-safe and we hand work to the default thread pool.
+        # thread-safe and we hand work to the default thread pool. We
+        # rebind this on recovery so a leaked executor thread that's
+        # stuck inside ``picam2.capture_array`` (and therefore still
+        # holding the old lock) can't deadlock the new pipeline.
         self._device_lock = threading.Lock()
         self._stop_task: asyncio.Task[None] | None = None
+        # Set by ``mark_broken()`` (typically from the snapshot worker
+        # after its per-capture timeout fires) and consumed by the next
+        # ``acquire()``, which tears the abandoned picamera2 instance
+        # down and starts a fresh one.
+        self._broken: bool = False
 
     @property
     def running(self) -> bool:
@@ -65,15 +73,41 @@ class Camera:
     def refcount(self) -> int:
         return self._refcount
 
+    def mark_broken(self) -> None:
+        """Signal that this camera's capture pipeline is wedged.
+
+        The next ``acquire()`` will abandon the current ``Picamera2``
+        instance (its leaked executor thread, blocked inside
+        ``capture_array``, may still hold the old ``_device_lock``),
+        rebind ``_device_lock``, best-effort close the old instance on
+        a daemon thread, and start a fresh one. Callers can keep
+        invoking this idempotently; only the next ``acquire()`` acts on
+        it."""
+        self._broken = True
+
     async def acquire(self) -> None:
         async with self._refcount_lock:
             self._refcount += 1
             if self._stop_task is not None and not self._stop_task.done():
                 self._stop_task.cancel()
                 self._stop_task = None
-            if self._picam2 is None:
-                loop = asyncio.get_running_loop()
-                await loop.run_in_executor(None, self._start_blocking)
+            try:
+                if self._broken:
+                    logger.warning(
+                        "Camera %d marked broken; abandoning instance and reopening",
+                        self.camera_num,
+                    )
+                    loop = asyncio.get_running_loop()
+                    await loop.run_in_executor(None, self._recover_blocking)
+                    self._broken = False
+                elif self._picam2 is None:
+                    loop = asyncio.get_running_loop()
+                    await loop.run_in_executor(None, self._start_blocking)
+            except Exception:
+                # Don't leak a refcount if start/recover failed; the
+                # next acquire will retry from a clean slate.
+                self._refcount -= 1
+                raise
 
     async def release(self) -> None:
         async with self._refcount_lock:
@@ -129,6 +163,52 @@ class Camera:
             picam2.close()
         finally:
             self._picam2 = None
+
+    def _recover_blocking(self) -> None:
+        """Drop a wedged ``Picamera2`` instance and start a fresh one.
+
+        The leaked executor thread that's stuck inside
+        ``picam2.capture_array`` may still be holding ``_device_lock``,
+        so we rebind the lock here — new captures use the fresh lock
+        and won't deadlock against the stuck thread. We also drop our
+        reference to the old picam2 and try to call ``close()`` on it
+        from a daemon thread, with a short wait. ``close()`` can itself
+        block on the wedged libcamera pipeline; if it does, we
+        proceed without it and accept that libcamera may refuse to let
+        us reopen the device (in which case ``_start_blocking`` below
+        raises and the caller's ``acquire()`` rolls back the
+        refcount).
+        """
+        old_picam2 = self._picam2
+        self._picam2 = None
+        self._device_lock = threading.Lock()
+
+        if old_picam2 is not None:
+            done = threading.Event()
+
+            def _closer() -> None:
+                try:
+                    old_picam2.close()
+                except Exception:
+                    logger.exception(
+                        "Force-close of camera %d failed", self.camera_num
+                    )
+                finally:
+                    done.set()
+
+            threading.Thread(
+                target=_closer,
+                daemon=True,
+                name=f"cam{self.camera_num}-recover-close",
+            ).start()
+            if not done.wait(timeout=3.0):
+                logger.error(
+                    "Camera %d close() hung during recovery; "
+                    "abandoning old picamera2 instance",
+                    self.camera_num,
+                )
+
+        self._start_blocking()
 
     async def capture(self) -> np.ndarray:
         """Capture one frame from the main stream as an RGB (H, W, 3) array."""
