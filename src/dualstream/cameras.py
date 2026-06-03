@@ -147,6 +147,32 @@ class Camera:
             if self._refcount == 0 and self._picam2 is not None:
                 self._stop_task = asyncio.create_task(self._delayed_stop())
 
+    async def stop_if_idle(self) -> None:
+        """Force an immediate stop if this camera has no active consumer.
+
+        Used by the snapshot worker after each tick to skip the
+        idle-grace warm-up and force a cold-start on the next capture.
+        Empirically, holding the picamera2 pipeline running between
+        snapshot ticks (which arrive every 1.5 s in active mode) lets
+        libcamera's buffer pool drift into a stalled state where
+        ``capture_array`` waits indefinitely for a frame that never
+        arrives. Closing the camera between ticks costs ~30 ms of
+        startup overhead per camera per tick but eliminates the
+        stall.
+
+        If another consumer (e.g. a WebRTC track) currently holds the
+        camera (refcount > 0), this is a no-op — the other consumer's
+        continuous pipeline keeps things healthy on its own."""
+        async with self._refcount_lock:
+            if self._stop_task is not None and not self._stop_task.done():
+                self._stop_task.cancel()
+                self._stop_task = None
+            if self._refcount == 0 and self._picam2 is not None:
+                loop = asyncio.get_running_loop()
+                await loop.run_in_executor(
+                    self._picam2_executor, self._stop_blocking
+                )
+
     async def _delayed_stop(self) -> None:
         try:
             await asyncio.sleep(self.idle_grace_seconds)

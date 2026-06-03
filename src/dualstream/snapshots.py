@@ -223,6 +223,15 @@ class SnapshotWorker:
             except (asyncio.TimeoutError, TimeoutError):
                 cam.mark_broken()
                 raise
+        # Force a cold start before the next snapshot tick. With the
+        # camera held running between ticks (the default idle-grace
+        # behaviour) libcamera's buffer pool eventually stalls and
+        # capture_array hangs. Closing the device now means the next
+        # tick gets a freshly-initialised pipeline, which sidesteps
+        # the stall entirely. Costs ~30 ms of startup per camera per
+        # tick. No-op if another consumer (e.g. WebRTC) is still
+        # holding the camera.
+        await cam.stop_if_idle()
         return await asyncio.get_running_loop().run_in_executor(
             None, self._encode_and_write, cam.camera_num, array, timestamp
         )
