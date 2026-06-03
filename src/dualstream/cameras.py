@@ -174,13 +174,20 @@ class Camera:
         # "BGR888" in picamera2 nomenclature returns numpy data in RGB channel
         # order; "RGB888" would return BGR. Pick BGR888 so PyAV "rgb24" and
         # Pillow "RGB" both accept the array directly.
+        # buffer_count=2: enough for a continuous WebRTC capture loop
+        # without dropping frames (one in-flight, one ready), but small
+        # enough that a slow / intermittent consumer (the snapshot
+        # worker at 1.5 s cadence) doesn't let stale buffers accumulate.
+        # buffer_count=4 occasionally let the pipeline stall on the
+        # IMX708-dual Pi 5 setup and was the proximate cause of
+        # ``capture_array`` wedging every other snapshot tick.
         config = picam2.create_video_configuration(
             main={"size": (self.quality.width, self.quality.height), "format": "BGR888"},
             controls={
                 "FrameDurationLimits": (frame_duration_us, frame_duration_us),
                 **self.controls,
             },
-            buffer_count=4,
+            buffer_count=2,
         )
         picam2.configure(config)
         picam2.start()

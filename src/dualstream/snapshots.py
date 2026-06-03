@@ -38,15 +38,15 @@ logger = logging.getLogger("dualstream.snapshots")
 
 class SnapshotWorker:
     # Wall-clock budget for a single ``cam.capture()`` call. picamera2's
-    # blocking ``capture_array`` runs inside an executor thread; if the
-    # underlying libcamera pipeline ever stalls (deadlocks against
-    # another consumer, buffer pool exhaustion, …) the await would hang
+    # blocking ``capture_array`` runs inside the per-camera executor;
+    # if the underlying libcamera pipeline stalls the await would hang
     # forever. When it fires we mark the camera broken so the next
     # ``acquire()`` rebuilds it from scratch — see
-    # ``Camera.mark_broken()``. Cold start is normally ≤ 2 s on a Pi 5
-    # with both IMX708s; 4 s leaves headroom without burning a whole
-    # tick budget on a wedged pipeline.
-    CAPTURE_TIMEOUT_SECONDS: float = 4.0
+    # ``Camera.mark_broken()``. Healthy captures complete in ~50 ms
+    # and a forced recovery (close + reopen) lands in ~20 ms on a Pi 5,
+    # so 2 s is generous; shorter than 4 s keeps the cost of each
+    # wedge low enough that the slideshow stays responsive.
+    CAPTURE_TIMEOUT_SECONDS: float = 2.0
 
     def __init__(
         self,
