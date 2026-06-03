@@ -14,6 +14,17 @@ Environment=DUALSTREAM_CONFIG=/etc/dualstream/dualstream.toml
 ExecStart=/opt/dualstream/.venv/bin/python -m dualstream
 Restart=on-failure
 RestartSec=5
+# Cap the worst-case shutdown wait. If picamera2's libcamera pipeline
+# wedges (cam.stop() hanging is a known failure mode on the IMX708 +
+# Pi 5 combo) the python process can take many tens of seconds to
+# return from on_cleanup. Without this override systemd waits its
+# default 90s before SIGKILLing, which makes `systemctl restart` (and
+# scripts/update.sh) feel like they've hung. 10s is a generous budget
+# for a healthy shutdown; anything beyond that gets the hammer.
+TimeoutStopSec=10
+# Send the stop signal to the whole cgroup so blocked executor threads
+# inside picamera2 get terminated when the main process is SIGKILLed.
+KillMode=mixed
 # Phase 2 will add CAP_SYS_ADMIN / sudoers for halt + wakealarm + LED.
 ProtectSystem=full
 ProtectHome=true

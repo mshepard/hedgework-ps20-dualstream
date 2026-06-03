@@ -254,12 +254,43 @@ class CameraManager:
         return sorted(self._cameras.keys())
 
     async def shutdown(self) -> None:
-        loop = asyncio.get_running_loop()
+        # Per-camera best-effort stop with a hard ceiling. picam2.stop()
+        # itself can block forever against a wedged libcamera pipeline,
+        # so we run each one on a daemon thread we're willing to abandon
+        # — if it hasn't returned in a few seconds, the python process
+        # is about to exit anyway and systemd's KillMode=mixed will
+        # SIGKILL whatever's left.
         for cam in self._cameras.values():
             if cam._stop_task is not None and not cam._stop_task.done():
                 cam._stop_task.cancel()
-            if cam._picam2 is not None:
-                await loop.run_in_executor(None, cam._stop_blocking)
+            if cam._picam2 is None:
+                continue
+            done = threading.Event()
+
+            def _runner(c: Camera = cam) -> None:
+                try:
+                    c._stop_blocking()
+                except Exception:
+                    logger.exception(
+                        "Stop of camera %d failed during shutdown", c.camera_num
+                    )
+                finally:
+                    done.set()
+
+            threading.Thread(
+                target=_runner,
+                daemon=True,
+                name=f"cam{cam.camera_num}-shutdown",
+            ).start()
+            # Run the wait off-loop so we don't freeze aiohttp's
+            # cleanup phase if multiple cameras need stopping.
+            loop = asyncio.get_running_loop()
+            stopped = await loop.run_in_executor(None, done.wait, 3.0)
+            if not stopped:
+                logger.error(
+                    "Camera %d stop hung during shutdown; abandoning",
+                    cam.camera_num,
+                )
 
 
 def _make_camera(num: int, cfg: CameraConfig, idle_grace_seconds: int) -> Camera:
