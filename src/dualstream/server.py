@@ -60,6 +60,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 import uuid
 from pathlib import Path
 
@@ -219,6 +220,31 @@ class DualStreamServer:
 
     async def _status(self, request: web.Request) -> web.Response:
         viewer_token_set = bool(self.config.server.viewer_token)
+        # Snapshot worker heartbeat. ``last_tick_age_s`` is the wall-clock
+        # gap between now and the most recent successful tick; if it grows
+        # without bound while the cam page is being polled, the worker is
+        # wedged. ``tick_count`` is monotonic across the service lifetime
+        # so you can sample it twice to verify forward progress.
+        snapshots = self.snapshots
+        now_mono = time.monotonic()
+        last_tick = getattr(snapshots, "_last_tick_finished_at", 0.0)
+        last_activity = getattr(snapshots, "_last_activity", 0.0)
+        snapshot_status = {
+            "tick_count": getattr(snapshots, "_tick_count", 0),
+            "last_tick_age_s": (
+                round(now_mono - last_tick, 2) if last_tick > 0 else None
+            ),
+            "last_activity_age_s": (
+                round(now_mono - last_activity, 2)
+                if last_activity > 0
+                else None
+            ),
+            "viewer_active": (
+                snapshots._viewer_is_active()
+                if hasattr(snapshots, "_viewer_is_active")
+                else False
+            ),
+        }
         return web.json_response(
             {
                 "version": __version__,
@@ -244,6 +270,7 @@ class DualStreamServer:
                     if viewer_token_set
                     else []
                 ),
+                "snapshots": snapshot_status,
                 "cameras": [
                     {
                         "camera_num": cam.camera_num,

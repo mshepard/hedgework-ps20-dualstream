@@ -37,6 +37,15 @@ logger = logging.getLogger("dualstream.snapshots")
 
 
 class SnapshotWorker:
+    # Wall-clock budget for a single ``cam.capture()`` call. picamera2's
+    # blocking ``capture_array`` runs inside an executor thread; if the
+    # underlying libcamera pipeline ever stalls (deadlocks against
+    # another consumer, buffer pool exhaustion, …) the await would hang
+    # forever and the entire worker loop would freeze on its first
+    # post-wake tick. The cold-start path is usually ≤ 2 s on a Pi 5
+    # with both IMX708s; 10 s leaves a generous safety margin.
+    CAPTURE_TIMEOUT_SECONDS: float = 10.0
+
     def __init__(
         self,
         cameras: CameraManager,
@@ -54,6 +63,10 @@ class SnapshotWorker:
         # frames at the fast cadence.
         self._last_activity: float = 0.0
         self._activity_event = asyncio.Event()
+        # Heartbeat counters surfaced for diagnostics. Don't gate any
+        # control flow on these — they're purely observational.
+        self._tick_count: int = 0
+        self._last_tick_finished_at: float = 0.0
 
     @property
     def base_path(self) -> Path:
@@ -115,46 +128,65 @@ class SnapshotWorker:
     async def _run(self) -> None:
         # Take one snapshot promptly on startup, then loop. Each iteration
         # sleeps for either the idle or the active interval and can be
-        # interrupted by either the stop signal (clean shutdown) or a
-        # viewer-activity ping (so we don't make someone wait minutes for
-        # the next idle-cadence tick to fire after they open the page).
+        # interrupted by a viewer-activity ping (so we don't make someone
+        # wait minutes for the next idle-cadence tick to fire after they
+        # open the page). Clean shutdown is delivered as task
+        # cancellation by ``stop()``, which propagates CancelledError up
+        # through ``wait_for`` and back here.
+        #
+        # ``_safe_tick`` is the only call into ``_tick`` in this loop: it
+        # absorbs any exception ``_tick`` raises so a single bad capture
+        # (camera glitch, picamera2 timeout, ENOSPC on the snapshot
+        # volume, …) doesn't kill the worker. Without this, the worker
+        # would tick once on activity, raise inside the next ``_tick``,
+        # propagate out through ``_run``, and silently end the task —
+        # which is exactly the failure mode we hit on the Pi the first
+        # time the cam page was opened.
         try:
-            await self._tick()
+            await self._safe_tick()
             while not self._stop_event.is_set():
                 self._activity_event.clear()
-                await self._sleep_until_next_tick()
+                interval = self._next_interval()
+                try:
+                    await asyncio.wait_for(
+                        self._activity_event.wait(), timeout=interval
+                    )
+                except (asyncio.TimeoutError, TimeoutError):
+                    pass
                 if self._stop_event.is_set():
                     break
-                await self._tick()
+                await self._safe_tick()
         except asyncio.CancelledError:
             raise
         except Exception:
             logger.exception("Snapshot worker crashed")
             raise
 
-    async def _sleep_until_next_tick(self) -> None:
-        """Sleep for the current interval, but wake early on stop or activity."""
-        stop_task = asyncio.create_task(self._stop_event.wait())
-        wake_task = asyncio.create_task(self._activity_event.wait())
+    async def _safe_tick(self) -> None:
+        """Run one ``_tick``, swallowing (and logging) any exception.
+
+        Cancellation still propagates so ``stop()`` can shut the worker
+        down cleanly; everything else is contained so the worker keeps
+        looping even after a transient failure."""
         try:
-            await asyncio.wait(
-                {stop_task, wake_task},
-                timeout=self._next_interval(),
-                return_when=asyncio.FIRST_COMPLETED,
-            )
-        finally:
-            # Cancel + await any tasks that didn't complete so asyncio
-            # doesn't warn about destroyed pending tasks at shutdown.
-            for task in (stop_task, wake_task):
-                if not task.done():
-                    task.cancel()
-                    try:
-                        await task
-                    except asyncio.CancelledError:
-                        pass
+            await self._tick()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Snapshot tick failed; worker continuing")
 
     async def _tick(self) -> None:
         timestamp = datetime.now()
+        self._tick_count += 1
+        tick_num = self._tick_count
+        start = time.monotonic()
+        active = self._viewer_is_active()
+        logger.info(
+            "Snapshot tick %d starting (mode=%s, interval=%.2fs)",
+            tick_num,
+            "active" if active else "idle",
+            self._next_interval(),
+        )
         for cam in self._cameras.all():
             try:
                 await self._capture_one(cam, timestamp)
@@ -164,10 +196,24 @@ class SnapshotWorker:
             self._prune()
         except Exception:
             logger.exception("Snapshot retention pruning failed")
+        elapsed = time.monotonic() - start
+        self._last_tick_finished_at = time.monotonic()
+        logger.info(
+            "Snapshot tick %d done in %.2fs", tick_num, elapsed
+        )
 
     async def _capture_one(self, cam: Camera, timestamp: datetime) -> Path:
+        # Wrap the blocking capture in a wall-clock timeout. ``cam.capture()``
+        # itself hands work to a thread pool, so a TimeoutError here only
+        # frees the awaiting coroutine — the underlying executor thread
+        # may still be stuck in picamera2 until libcamera unblocks. That
+        # leaks a thread per timeout, but it keeps the snapshot loop
+        # alive, which is more important than the leak (and timeouts
+        # should be rare).
         async with cam.session():
-            array = await cam.capture()
+            array = await asyncio.wait_for(
+                cam.capture(), timeout=self.CAPTURE_TIMEOUT_SECONDS
+            )
         return await asyncio.get_running_loop().run_in_executor(
             None, self._encode_and_write, cam.camera_num, array, timestamp
         )
